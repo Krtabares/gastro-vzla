@@ -1,0 +1,120 @@
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { useCurrency } from '@/context/CurrencyContext';
+import { X, Save, TrendingUp, Percent, ArrowUpRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+  const { exchangeRate, setExchangeRate, iva, setIva, igtf, setIgtf, suggestedRate } = useCurrency();
+  const [tempRate, setTempRate] = useState(exchangeRate);
+  const [tempIva, setTempIva] = useState(iva * 100);
+  const [tempIgtf, setTempIgtf] = useState(igtf * 100);
+
+  useEffect(() => {
+    setTempRate(exchangeRate);
+  }, [exchangeRate]);
+
+  if (!isOpen) return null;
+
+  const handleSave = () => {
+    setExchangeRate(tempRate);
+    setIva(tempIva / 100);
+    setIgtf(tempIgtf / 100);
+    onClose();
+  };
+
+  const applySuggested = () => {
+    if (suggestedRate) {
+      setTempRate(suggestedRate);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-brand-dark/80 backdrop-blur-md flex items-center justify-center z-[250] p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="glass-card w-full max-w-md shadow-2xl overflow-hidden border-brand-accent/20"
+      >
+        <div className="p-8 border-b border-brand-border/30 flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-black text-white uppercase tracking-tight">Ecomomía</h2>
+            <p className="text-[10px] font-bold text-brand-text/40 uppercase tracking-widest mt-1">Configuración Fiscal</p>
+          </div>
+          <button onClick={onClose} className="p-2 glass-card hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+        
+        <div className="p-8 space-y-8">
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                <TrendingUp size={14} className="text-brand-accent" /> Tasa de Cambio (VES/$)
+              </label>
+              {suggestedRate && suggestedRate !== tempRate && (
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  onClick={applySuggested}
+                  className="text-[9px] font-black text-brand-highlight hover:text-white flex items-center gap-2 bg-brand-highlight/10 border border-brand-highlight/20 px-3 py-1 rounded-full transition-all"
+                >
+                  <ArrowUpRight size={12} /> Sugerido: {suggestedRate}
+                </motion.button>
+              )}
+            </div>
+            <div className="relative">
+              <input 
+                type="number" 
+                step="0.01"
+                value={tempRate}
+                onChange={(e) => setTempRate(parseFloat(e.target.value) || 0)}
+                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-5 px-6 text-3xl font-black text-white focus:border-brand-accent focus:ring-4 focus:ring-brand-accent/10 outline-none transition-all tracking-tighter"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                <Percent size={14} className="text-brand-accent" /> IVA (%)
+              </label>
+              <input 
+                type="number" 
+                value={tempIva}
+                onChange={(e) => setTempIva(parseFloat(e.target.value) || 0)}
+                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none"
+              />
+            </div>
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
+                <Percent size={14} className="text-brand-accent" /> IGTF (%)
+              </label>
+              <input 
+                type="number" 
+                value={tempIgtf}
+                onChange={(e) => setTempIgtf(parseFloat(e.target.value) || 0)}
+                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="p-8 bg-brand-dark/40 flex gap-4">
+          <button 
+            onClick={onClose}
+            className="flex-1 py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest text-brand-text/40 hover:bg-brand-border/20 transition-all"
+          >
+            Cancelar
+          </button>
+          <button 
+            onClick={handleSave}
+            className="flex-1 bg-brand-accent hover:bg-brand-accent/90 text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 shadow-xl shadow-brand-accent/20 transition-all"
+          >
+            <Save size={18} strokeWidth={3} /> Guardar
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}

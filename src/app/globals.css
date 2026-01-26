@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --brand-dark: #0A0A0B;
+    --brand-text: #EDEDED;
+  }
+
+  body {
+    @apply bg-brand-dark text-brand-text antialiased;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv03";
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-brand-card/40 backdrop-blur-xl border border-brand-border/50 rounded-bento;
+  }
+
+  .bento-grid {
+    @apply grid gap-4 p-4;
+  }
+
+  .nebula-accent-glow {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(124, 58, 237, 0.08) 0%, transparent 70%);
+    filter: blur(80px);
+    pointer-events: none;
+    z-index: -1;
+  }
+}
+
+/* Custom scrollbar para estética dark */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-brand-dark;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-brand-border rounded-full hover:bg-brand-accent/50 transition-colors;
+}
