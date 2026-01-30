@@ -31,7 +31,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           className="flex flex-col items-center gap-6"
         >
           <div className="w-16 h-16 border-4 border-brand-accent border-t-transparent rounded-full animate-spin shadow-2xl shadow-brand-accent/20"></div>
-          <p className="text-brand-text/40 font-black text-[10px] uppercase tracking-[0.5em] animate-pulse">Iniciando Nebula OS</p>
+          <p className="text-brand-text/40 font-black text-[10px] uppercase tracking-[0.5em] animate-pulse">Kenat Powerhouse</p>
         </motion.div>
       </div>
     );

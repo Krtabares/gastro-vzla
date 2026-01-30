@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { db, supabase } from '@/lib/db';
 
 export interface OrderItem {
   name: string;
@@ -18,7 +19,7 @@ export interface Order {
 interface OrdersContextType {
   orders: Order[];
   dailySalesUsd: number;
-  addOrder: (tableNumber: string, items: OrderItem[]) => void;
+  addOrder: (tableNumber: string, items: OrderItem[], note?: string, type?: 'table' | 'takeaway' | 'delivery') => void;
   markAsReady: (orderId: string) => void;
   completeSale: (amountUsd: number) => void;
   resetDay: () => void;
@@ -30,19 +31,52 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [dailySalesUsd, setDailySalesUsd] = useState(0);
 
-  const addOrder = (tableNumber: string, items: OrderItem[]) => {
-    const newOrder: Order = {
-      id: Math.random().toString(36).substr(2, 9),
-      tableNumber,
-      items,
-      status: 'pending',
-      createdAt: new Date(),
-    };
-    setOrders(prev => [...prev, newOrder]);
+  useEffect(() => {
+    loadOrders();
+
+    // Sincronización Realtime (Cloud)
+    if (supabase) {
+      const currentSupabase = supabase;
+      const channel = currentSupabase
+        .channel('realtime-orders')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          () => {
+            loadOrders();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        currentSupabase.removeChannel(channel);
+      };
+    }
+  }, []);
+
+  const loadOrders = async () => {
+    const data = await db.getOrders();
+    setOrders(data.map((o: any) => ({
+      ...o,
+      createdAt: new Date(o.createdAt)
+    })));
   };
 
-  const markAsReady = (orderId: string) => {
-    setOrders(prev => prev.filter(o => o.id !== orderId));
+  const addOrder = async (tableNumber: string, items: OrderItem[], note?: string, type: 'table' | 'takeaway' | 'delivery' = 'table') => {
+    const newOrder = {
+      tableNumber,
+      items,
+      status: 'pending' as const,
+      note,
+      type,
+      createdAt: new Date().toISOString(),
+    };
+    
+    await db.saveOrder(newOrder);
+  };
+
+  const markAsReady = async (orderId: string) => {
+    await db.deleteOrder(orderId);
   };
 
   const completeSale = (amountUsd: number) => {

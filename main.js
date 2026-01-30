@@ -5,6 +5,34 @@ const fs = require('fs');
 const escpos = require('escpos');
 escpos.USB = require('escpos-usb');
 const Datastore = require('nedb-promises');
+const express = require('express');
+
+// Configuración del servidor para móviles
+const expressApp = express();
+const SERVER_PORT = 3001; // Usamos 3001 para no chocar con Next.js dev (3000)
+
+function startLocalServer() {
+  const outPath = isDev 
+    ? path.join(__dirname, 'out') 
+    : path.join(process.resourcesPath, 'app', 'out');
+
+  // Si no existe la carpeta out y no es dev, avisar
+  if (!fs.existsSync(outPath) && !isDev) {
+    console.error('La carpeta "out" no existe. Asegúrate de correr npm run build primero.');
+    return;
+  }
+
+  expressApp.use(express.static(outPath));
+  
+  // Manejar rutas de Next.js (SPA)
+  expressApp.get(/.*/, (req, res) => {
+    res.sendFile(path.join(outPath, 'index.html'));
+  });
+
+  expressApp.listen(SERVER_PORT, '0.0.0.0', () => {
+    console.log(`Servidor para móviles disponible en: http://0.0.0.0:${SERVER_PORT}`);
+  });
+}
 
 // Ruta para las bases de datos NeDB
 const dbDir = path.join(app.getPath('userData'), 'database');
@@ -456,7 +484,10 @@ ipcMain.handle('db-reset', async (event, { mode }) => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  startLocalServer();
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

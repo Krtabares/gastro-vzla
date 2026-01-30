@@ -6,7 +6,7 @@ import { User } from '@/lib/db';
 
 interface RoleGuardProps {
   children: React.ReactNode;
-  allowedRoles: ('root' | 'admin' | 'cashier')[];
+  allowedRoles: ('root' | 'admin' | 'cashier' | 'waiter')[];
 }
 
 export default function RoleGuard({ children, allowedRoles }: RoleGuardProps) {

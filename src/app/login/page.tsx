@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/db";
 import { Lock, User, AlertCircle, ChefHat } from "lucide-react";
@@ -11,7 +11,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [storageMode, setStorageMode] = useState<string>("local");
   const router = useRouter();
+
+  useEffect(() => {
+    const mode = localStorage.getItem("gastro_storage_mode") || "local";
+    setStorageMode(mode);
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,12 +131,11 @@ export default function LoginPage() {
 
           <div className="mt-10 pt-8 border-t border-brand-border/30 text-center space-y-4">
             <div className="flex justify-center gap-4">
-              <span className="px-3 py-1 bg-brand-highlight/10 text-brand-highlight text-[10px] font-black rounded-full uppercase tracking-wider">Modo Offline</span>
+              <span className={`px-3 py-1 ${storageMode === 'cloud' ? 'bg-blue-500/10 text-blue-400' : 'bg-brand-highlight/10 text-brand-highlight'} text-[10px] font-black rounded-full uppercase tracking-wider`}>
+                Modo {storageMode === 'cloud' ? 'Cloud' : 'Offline'}
+              </span>
               <span className="px-3 py-1 bg-brand-border/50 text-brand-text/40 text-[10px] font-black rounded-full uppercase tracking-wider">v2.0.0</span>
             </div>
-            <p className="text-[10px] font-bold text-brand-text/20 uppercase tracking-[0.3em]">
-              Powered by <span className="text-brand-text/40">Midnight Nebula UI</span>
-            </p>
           </div>
         </div>
       </motion.div>

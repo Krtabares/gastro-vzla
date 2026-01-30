@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useCurrency } from "@/context/CurrencyContext";
 import { useOrders } from "@/context/OrdersContext";
 import BillingModal from "@/components/pos/BillingModal";
-import { db, Product, Table } from "@/lib/db";
+import { db, Product, Table, supabase, User as DbUser } from "@/lib/db";
 import { 
   ChevronLeft, 
   Users, 
@@ -19,14 +19,21 @@ import {
   Trash2,
   Send,
   PlusCircle,
-  LayoutDashboard
+  LayoutDashboard,
+  MessageSquarePlus,
+  StickyNote,
+  Minus,
+  ShoppingBag,
+  Bike,
+  Package,
+  ArrowRight
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function POSPage() {
   const { formatUsd, formatVes, usdToVes, iva } = useCurrency();
-  const { addOrder, completeSale } = useOrders();
+  const { orders, addOrder, completeSale } = useOrders();
   const [tables, setTables] = useState<Table[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
@@ -34,12 +41,41 @@ export default function POSPage() {
   const [isBillingOpen, setIsBillingOpen] = useState(false);
   const [isTableNameModalOpen, setIsTableNameModalOpen] = useState(false);
   const [suggestedTableName, setSuggestedTableName] = useState("");
+  const [isCartMobileOpen, setIsCartMobileOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<DbUser | null>(null);
+  const [orderNote, setOrderNote] = useState("");
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [isSendingToKitchen, setIsSendingToKitchen] = useState(false);
+  const [isExternalOrdersOpen, setIsExternalOrdersOpen] = useState(false);
+  const [isTakeawayModalOpen, setIsTakeawayModalOpen] = useState(false);
 
   useEffect(() => {
     loadData();
+    const storedUser = localStorage.getItem('gastro_user');
+    if (storedUser) setCurrentUser(JSON.parse(storedUser));
+
+    // Suscripción Realtime para Mesas
+    if (supabase) {
+      const currentSupabase = supabase;
+      const channel = currentSupabase
+        .channel('realtime-tables')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'tables' },
+          () => {
+            console.log('Update detected in tables, reloading...');
+            loadData();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        currentSupabase.removeChannel(channel);
+      };
+    }
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (ignoreSelection = false) => {
     const [dbTables, dbProducts] = await Promise.all([
       db.getTables(),
       db.getProducts()
@@ -47,24 +83,44 @@ export default function POSPage() {
     setTables(dbTables);
     setProducts(dbProducts);
     
-    if (selectedTable) {
+    if (selectedTable && !ignoreSelection) {
       const updated = dbTables.find(t => t.id === selectedTable.id);
-      if (updated) {
+      if (updated && updated.status !== 'available') {
         setSelectedTable(updated);
         if (updated.orderData) {
-          setCart(JSON.parse(updated.orderData));
+          try {
+            setCart(JSON.parse(updated.orderData));
+          } catch(e) {
+            setCart([]);
+          }
         }
+        if (updated.orderNote) {
+          setOrderNote(updated.orderNote);
+        }
+      } else if (updated && updated.status === 'available') {
+        // Si la mesa se liberó (ej. por otro terminal), la cerramos aquí también
+        setSelectedTable(null);
+        setCart([]);
+        setOrderNote("");
       }
     }
   };
 
   const handleTableSelect = (table: Table) => {
+    console.log('Selecting table:', table);
     setSelectedTable(table);
-    if (table.orderData) {
-      setCart(JSON.parse(table.orderData));
+    if (table.status === 'occupied' && table.orderData) {
+      try {
+        const parsedCart = JSON.parse(table.orderData);
+        setCart(Array.isArray(parsedCart) ? parsedCart : []);
+      } catch (e) {
+        console.error("Error parsing orderData:", e);
+        setCart([]);
+      }
     } else {
       setCart([]);
     }
+    setOrderNote(table.orderNote || "");
   };
 
   const createTable = async () => {
@@ -97,6 +153,25 @@ export default function POSPage() {
     loadData();
   };
 
+  const confirmCreateTakeaway = async (clientName: string, type: 'takeaway' | 'delivery') => {
+    if (!clientName.trim()) return;
+    
+    const newExternalOrder: Table = {
+      id: Math.random().toString(36).substr(2, 9),
+      number: clientName.trim().toUpperCase(),
+      status: 'occupied',
+      type: type,
+      startTime: new Date().toISOString(),
+      currentTotalUsd: 0,
+    };
+    
+    await db.saveTable(newExternalOrder);
+    setIsTakeawayModalOpen(false);
+    loadData();
+    setSelectedTable(newExternalOrder);
+    setCart([]);
+  };
+
   const deleteTable = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const table = tables.find(t => t.id === id);
@@ -111,13 +186,13 @@ export default function POSPage() {
   };
 
   const addToCart = (product: Product) => {
-    if (product.stock !== undefined && product.stock <= 0) {
+    if (product.stock !== undefined && product.stock !== -1 && product.stock <= 0) {
       alert(`El producto "${product.name}" está agotado.`);
       return;
     }
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
-      if (existing && product.stock !== undefined && existing.quantity >= product.stock) {
+      if (existing && product.stock !== undefined && product.stock !== -1 && existing.quantity >= product.stock) {
         alert(`No hay suficiente stock disponible para añadir más unidades de "${product.name}".`);
         return prev;
       }
@@ -134,54 +209,133 @@ export default function POSPage() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
+  const decreaseQuantity = (productId: string) => {
+    setCart(prev => {
+      const existing = prev.find(item => item.product.id === productId);
+      if (existing && existing.quantity > 1) {
+        return prev.map(item => 
+          item.product.id === productId ? { ...item, quantity: item.quantity - 1 } : item
+        );
+      }
+      return prev.filter(item => item.product.id !== productId);
+    });
+  };
+
   const subtotalUsd = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0);
   const ivaUsd = subtotalUsd * iva;
   const totalUsd = subtotalUsd + ivaUsd;
 
   const handleSendToKitchen = async () => {
-    if (!selectedTable || cart.length === 0) return;
-    addOrder(selectedTable.number, cart.map(item => ({
-      name: item.product.name,
-      quantity: item.quantity
-    })));
-    const now = new Date();
-    await db.saveTable({ 
-      ...selectedTable, 
-      status: 'occupied',
-      currentOrderId: Math.random().toString(36).substr(2, 9),
-      currentTotalUsd: totalUsd,
-      startTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      orderData: JSON.stringify(cart)
-    });
-    loadData();
-    setSelectedTable(null);
-    setCart([]);
+    if (!selectedTable || cart.length === 0 || isSendingToKitchen) return;
+
+    setIsSendingToKitchen(true);
+    // Guardamos referencia y limpiamos estado local inmediatamente para evitar rebote del Realtime
+    const tableToUpdate = selectedTable;
+    const currentCart = [...cart];
+    const currentNote = orderNote;
+    
+    try {
+      // Verificar si ya existe una orden activa para esta mesa en el contexto global
+      const existingOrder = (orders as any[]).find((o: any) => o.tableNumber === tableToUpdate.number);
+
+      if (existingOrder) {
+        // Si existe, actualizamos la orden existente en lugar de crear una nueva
+        await db.updateOrder(existingOrder.id, {
+          items: currentCart.map(item => ({
+            name: item.product.name,
+            quantity: item.quantity
+          })),
+          note: currentNote,
+          createdAt: new Date().toISOString() // Actualizamos la hora para que cocina vea que es un cambio reciente
+        });
+      } else {
+        // Si no existe, creamos una nueva
+        await addOrder(
+          tableToUpdate.number, 
+          currentCart.map(item => ({
+            name: item.product.name,
+            quantity: item.quantity
+          })), 
+          currentNote,
+          tableToUpdate.type || 'table'
+        );
+      }
+
+      const now = new Date();
+      await db.saveTable({ 
+        ...tableToUpdate, 
+        status: 'occupied',
+        currentOrderId: existingOrder ? existingOrder.id : Math.random().toString(36).substr(2, 9),
+        currentTotalUsd: totalUsd,
+        startTime: tableToUpdate.startTime || now.toISOString(),
+        orderData: JSON.stringify(currentCart),
+        orderNote: currentNote
+      });
+
+      setSelectedTable(null);
+      setCart([]);
+      setOrderNote("");
+      // No hace falta llamar a loadData() aquí, el Realtime lo hará por nosotros
+    } catch (error) {
+      console.error("Error al enviar a cocina:", error);
+      alert("Error al enviar a cocina. Intente nuevamente.");
+    } finally {
+      setIsSendingToKitchen(false);
+    }
   };
 
   const handlePaymentComplete = async () => {
     if (!selectedTable) return;
-    completeSale(totalUsd);
-    await db.saveTable({ 
-      ...selectedTable, 
-      status: 'available',
-      currentOrderId: undefined,
-      currentTotalUsd: 0,
-      startTime: undefined,
-      orderData: undefined
-    });
-    loadData();
+    
+    const tableId = selectedTable.id;
+    const tableNum = selectedTable.number;
+    const finalTotal = totalUsd;
+    
+    // 1. Limpiar estado visual inmediatamente
     setIsBillingOpen(false);
     setSelectedTable(null);
     setCart([]);
+    setOrderNote("");
+
+    try {
+      // 2. Eliminar la orden de cocina (si existe)
+      const orderToDelete = (orders as any[]).find((o: any) => o.tableNumber === tableNum);
+      if (orderToDelete) {
+        await db.deleteOrder(orderToDelete.id);
+      }
+
+      // 3. Limpiar la mesa en la DB forzando valores nulos
+      // Usamos el objeto completo para asegurar que no queden remanentes
+      await db.saveTable({ 
+        id: tableId,
+        number: tableNum,
+        status: 'available',
+        currentOrderId: null,
+        currentTotalUsd: 0,
+        startTime: null,
+        orderData: null,
+        orderNote: null
+      });
+
+      // 4. Registrar la venta
+      completeSale(finalTotal);
+      
+      // 5. Recargar datos para sincronizar con la DB (ignorando la selección para que no se reabra)
+      await loadData(true);
+    } catch (error) {
+      console.error("Error finalizing payment:", error);
+    }
   };
 
   if (selectedTable) {
+    const isExternal = selectedTable.type === 'takeaway' || selectedTable.type === 'delivery';
+
     return (
-      <main className="min-h-screen bg-brand-dark flex flex-col md:flex-row overflow-hidden h-screen relative">
+      <main className="min-h-screen bg-brand-dark flex flex-col md:flex-row overflow-hidden md:h-screen relative">
         <div className="absolute top-0 left-0 nebula-accent-glow opacity-20" />
         
         {/* Productos */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 relative z-10">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 relative z-10 custom-scrollbar">
           <header className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-4">
               <motion.button 
@@ -192,17 +346,42 @@ export default function POSPage() {
                 <ChevronLeft size={24} />
               </motion.button>
               <div>
-                <h2 className="text-3xl font-black text-white tracking-tight">Mesa #{selectedTable.number}</h2>
-                <p className="text-brand-text/40 text-[10px] font-black uppercase tracking-[0.3em]">Selección de Menú</p>
+                <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+                  {isExternal ? (
+                    <>
+                      {selectedTable.type === 'takeaway' ? <ShoppingBag className="text-brand-accent" /> : <Bike className="text-brand-highlight" />}
+                      {selectedTable.number}
+                    </>
+                  ) : (
+                    `Mesa #${selectedTable.number}`
+                  )}
+                </h2>
+                <p className="text-brand-text/40 text-[10px] font-black uppercase tracking-[0.3em]">
+                  {isExternal ? `Orden para ${selectedTable.type === 'takeaway' ? 'Llevar' : 'Delivery'}` : 'Selección de Menú'}
+                </p>
               </div>
             </div>
+
+            {/* Botón Flotante Comanda Móvil */}
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setIsCartMobileOpen(true)}
+              className="md:hidden p-4 bg-brand-accent text-white rounded-2xl shadow-xl shadow-brand-accent/20 flex items-center gap-2 relative"
+            >
+              <ShoppingCart size={24} />
+              {cart.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-6 h-6 bg-white text-brand-accent rounded-full text-[10px] font-black flex items-center justify-center border-2 border-brand-accent">
+                  {cart.reduce((acc, item) => acc + item.quantity, 0)}
+                </span>
+              )}
+            </motion.button>
           </header>
 
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20 md:pb-0">
             <AnimatePresence>
               {products.map((product, idx) => {
-                const isOutOfStock = product.stock !== undefined && product.stock <= 0;
-                const isLowStock = product.stock !== undefined && product.minStock !== undefined && product.stock <= product.minStock;
+                const isOutOfStock = product.stock !== undefined && product.stock === 0;
+                const isLowStock = product.stock !== undefined && product.stock !== -1 && product.minStock !== undefined && product.stock <= product.minStock;
 
                 return (
                   <motion.button 
@@ -224,7 +403,7 @@ export default function POSPage() {
                     <h3 className="font-black text-white mb-1 group-hover:text-brand-accent transition-colors">{product.name}</h3>
                     <p className="text-[10px] font-bold text-brand-text/30 uppercase tracking-widest mb-4">{product.category}</p>
                     
-                    {product.stock !== undefined && (
+                    {product.stock !== undefined && product.stock !== -1 && (
                       <div className={`text-[9px] font-black px-2 py-1 rounded-lg inline-block mb-4 ${isLowStock ? 'bg-red-500/10 text-red-400' : 'bg-brand-highlight/10 text-brand-highlight'}`}>
                         {isOutOfStock ? 'AGOTADO' : `STOCK: ${product.stock}`}
                       </div>
@@ -241,100 +420,173 @@ export default function POSPage() {
           </div>
         </div>
 
-        {/* Comanda */}
-        <div className="w-full md:w-[420px] glass-card !rounded-none !border-y-0 !border-r-0 flex flex-col h-full bg-brand-card/20 backdrop-blur-2xl relative z-20 pb-16">
-          <div className="p-8 border-b border-brand-border/30">
-            <h2 className="text-xl font-black text-white flex items-center gap-3 uppercase tracking-widest">
-              <ShoppingCart size={22} className="text-brand-accent" /> Comanda
-            </h2>
-          </div>
+        {/* Comanda (Overlay en móvil, sidebar en desktop) */}
+        <AnimatePresence>
+          {(isCartMobileOpen || typeof window !== 'undefined' && window.innerWidth >= 768) && (
+            <motion.div 
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed inset-0 md:relative md:inset-auto z-[100] md:z-20 w-full md:w-[420px] h-full flex flex-col"
+            >
+              {/* Overlay Backdrop (Solo móvil) */}
+              <div 
+                className="absolute inset-0 bg-brand-dark/60 backdrop-blur-sm md:hidden"
+                onClick={() => setIsCartMobileOpen(false)}
+              />
 
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
-            <AnimatePresence mode="popLayout">
-              {cart.length === 0 ? (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center py-20"
-                >
-                  <ShoppingCart size={64} className="mx-auto mb-6 text-brand-text/10" />
-                  <p className="text-brand-text/20 font-black uppercase tracking-[0.3em] text-xs">Sin productos</p>
-                </motion.div>
-              ) : (
-                cart.map(item => (
-                  <motion.div 
-                    layout
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    key={item.product.id} 
-                    className="flex justify-between items-center bg-brand-dark/40 border border-brand-border/30 p-4 rounded-2xl group hover:border-brand-accent/30 transition-all"
+              <div className="relative glass-card !rounded-none !border-y-0 !border-r-0 flex flex-col h-full bg-brand-card/95 md:bg-brand-card/20 backdrop-blur-2xl w-full ml-auto shadow-2xl md:shadow-none">
+                <div className="p-8 border-b border-brand-border/30 flex justify-between items-center">
+                  <h2 className="text-xl font-black text-white flex items-center gap-3 uppercase tracking-widest">
+                    <ShoppingCart size={22} className="text-brand-accent" /> Comanda
+                  </h2>
+                  <button 
+                    onClick={() => setIsCartMobileOpen(false)}
+                    className="md:hidden p-2 text-brand-text/40 hover:text-white"
                   >
-                    <div className="flex-1">
-                      <p className="font-black text-white text-sm mb-1">{item.product.name}</p>
-                      <p className="text-[10px] font-bold text-brand-text/40 uppercase">
-                        {item.quantity} x {formatUsd(item.product.price)}
-                      </p>
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
+                  {cart.length === 0 ? (
+                    <div className="text-center py-20">
+                      <ShoppingCart size={64} className="mx-auto mb-6 text-brand-text/10" />
+                      <p className="text-brand-text/20 font-black uppercase tracking-[0.3em] text-xs">Sin productos</p>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="font-black text-white">{formatUsd(item.product.price * item.quantity)}</span>
+                  ) : (
+                    <>
+                      {cart.map(item => (
+                        <motion.div 
+                          layout
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          key={item.product.id} 
+                          className="flex justify-between items-center bg-brand-dark/40 border border-brand-border/30 p-4 rounded-2xl group hover:border-brand-accent/30 transition-all"
+                        >
+                          <div className="flex-1">
+                            <p className="font-black text-white text-sm mb-1">{item.product.name}</p>
+                            <p className="text-[10px] font-bold text-brand-text/40 uppercase">
+                              {item.quantity} x {formatUsd(item.product.price)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center bg-brand-dark rounded-xl border border-brand-border/50">
+                              <button 
+                                onClick={() => decreaseQuantity(item.product.id)}
+                                className="p-2 text-brand-text/40 hover:text-white transition-colors"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span className="text-white font-black text-xs min-w-[20px] text-center">{item.quantity}</span>
+                              <button 
+                                onClick={() => addToCart(item.product)}
+                                className="p-2 text-brand-text/40 hover:text-white transition-colors"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                            <div className="text-right min-w-[80px]">
+                              <p className="font-black text-white">{formatUsd(item.product.price * item.quantity)}</p>
+                              <button 
+                                onClick={() => removeFromCart(item.product.id)}
+                                className="text-brand-text/10 hover:text-red-400 p-1 transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+
+                      {orderNote && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-brand-highlight/10 border border-brand-highlight/20 p-4 rounded-2xl flex items-start gap-3"
+                        >
+                          <StickyNote size={18} className="text-brand-highlight shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-[10px] font-black text-brand-highlight uppercase tracking-widest mb-1">Nota para Cocina</p>
+                            <p className="text-xs text-white/80 italic">"{orderNote}"</p>
+                          </div>
+                          <button onClick={() => setOrderNote("")} className="text-brand-highlight/40 hover:text-red-400 p-1">
+                            <X size={14} />
+                          </button>
+                        </motion.div>
+                      )}
+
                       <button 
-                        onClick={() => removeFromCart(item.product.id)}
-                        className="text-brand-text/20 hover:text-red-400 p-2 transition-colors"
+                        onClick={() => setIsNoteModalOpen(true)}
+                        className="w-full py-3 border border-dashed border-brand-border/50 rounded-2xl flex items-center justify-center gap-2 text-brand-text/40 hover:text-brand-highlight hover:border-brand-highlight/50 transition-all text-[10px] font-black uppercase tracking-widest"
                       >
-                        <Trash2 size={18} />
+                        <MessageSquarePlus size={16} />
+                        {orderNote ? 'Editar Nota' : 'Agregar Nota'}
                       </button>
+                    </>
+                  )}
+                </div>
+
+                <div className="p-8 bg-brand-dark/60 border-t border-brand-border/50 space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
+                      <span>Subtotal</span>
+                      <span>{formatUsd(subtotalUsd)}</span>
                     </div>
-                  </motion.div>
-                ))
-              )}
-            </AnimatePresence>
-          </div>
+                    <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
+                      <span>IVA (16%)</span>
+                      <span>{formatUsd(ivaUsd)}</span>
+                    </div>
+                  </div>
 
-          <div className="p-8 bg-brand-dark/60 border-t border-brand-border/50 space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
-                <span>Subtotal</span>
-                <span>{formatUsd(subtotalUsd)}</span>
-              </div>
-              <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
-                <span>IVA (16%)</span>
-                <span>{formatUsd(ivaUsd)}</span>
-              </div>
-            </div>
+                  <div className="pt-4 border-t border-brand-border/30">
+                    <div className="flex justify-between items-end mb-1">
+                      <span className="font-black text-brand-text/40 text-[10px] uppercase tracking-[0.3em]">Total</span>
+                      <span className="text-4xl font-black text-white tracking-tighter">{formatUsd(totalUsd)}</span>
+                    </div>
+                    <div className="flex justify-between text-brand-highlight font-black text-xs uppercase tracking-tighter">
+                      <span>Bs. Total</span>
+                      <span>{formatVes(usdToVes(totalUsd))}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 gap-3 pt-4">
+                    {currentUser?.role !== 'waiter' && (
+                      <motion.button 
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => setIsBillingOpen(true)}
+                        className="w-full bg-brand-highlight text-brand-dark py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-highlight/20 transition-all uppercase tracking-widest text-sm"
+                      >
+                        <DollarSign size={20} strokeWidth={3} /> Cobrar
+                      </motion.button>
+                    )}
 
-            <div className="pt-4 border-t border-brand-border/30">
-              <div className="flex justify-between items-end mb-1">
-                <span className="font-black text-brand-text/40 text-[10px] uppercase tracking-[0.3em]">Total</span>
-                <span className="text-4xl font-black text-white tracking-tighter">{formatUsd(totalUsd)}</span>
+                    <motion.button 
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      disabled={isSendingToKitchen}
+                      onClick={() => {
+                        handleSendToKitchen();
+                        setIsCartMobileOpen(false);
+                      }}
+                      className={`w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm ${isSendingToKitchen ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {isSendingToKitchen ? (
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Send size={20} strokeWidth={3} />
+                      )}
+                      {isSendingToKitchen ? 'Enviando...' : 'Cocina'}
+                    </motion.button>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between text-brand-highlight font-black text-xs uppercase tracking-tighter">
-                <span>Bs. Total</span>
-                <span>{formatVes(usdToVes(totalUsd))}</span>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-1 gap-3 pt-4">
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setIsBillingOpen(true)}
-                className="w-full bg-brand-highlight text-brand-dark py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-highlight/20 transition-all uppercase tracking-widest text-sm"
-              >
-                <DollarSign size={20} strokeWidth={3} /> Cobrar
-              </motion.button>
-
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleSendToKitchen}
-                className="w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm"
-              >
-                <Send size={20} strokeWidth={3} /> Cocina
-              </motion.button>
-            </div>
-          </div>
-        </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <BillingModal 
           isOpen={isBillingOpen}
@@ -343,6 +595,7 @@ export default function POSPage() {
           subtotalUsd={subtotalUsd}
           items={cart}
           onComplete={handlePaymentComplete}
+          type={selectedTable.type}
         />
 
         <TableNameModal 
@@ -350,6 +603,16 @@ export default function POSPage() {
           onClose={() => setIsTableNameModalOpen(false)}
           defaultValue={suggestedTableName}
           onConfirm={confirmCreateTable}
+        />
+
+        <NoteModal 
+          isOpen={isNoteModalOpen}
+          onClose={() => setIsNoteModalOpen(false)}
+          value={orderNote}
+          onConfirm={(val) => {
+            setOrderNote(val);
+            setIsNoteModalOpen(false);
+          }}
         />
       </main>
     );
@@ -377,30 +640,116 @@ export default function POSPage() {
           <div className="flex flex-wrap gap-3">
             <motion.button 
               whileHover={{ y: -2 }}
+              onClick={() => setIsTakeawayModalOpen(true)}
+              className="bg-brand-highlight text-brand-dark px-6 py-3 rounded-2xl font-black flex items-center gap-3 transition-all shadow-xl shadow-brand-highlight/20 uppercase tracking-widest text-xs"
+            >
+              <ShoppingBag size={18} /> Para Llevar / Delivery
+            </motion.button>
+            <motion.button 
+              whileHover={{ y: -2 }}
               onClick={createTable}
               className="bg-brand-accent text-white px-6 py-3 rounded-2xl font-black flex items-center gap-3 transition-all shadow-xl shadow-brand-accent/20 uppercase tracking-widest text-xs"
             >
               <PlusCircle size={18} /> Nueva Mesa
             </motion.button>
-            <div className="glass-card px-5 py-3 flex items-center gap-3 text-xs font-black uppercase tracking-widest text-brand-highlight">
-              <span className="w-2.5 h-2.5 bg-brand-highlight rounded-full animate-pulse shadow-[0_0_10px_rgba(6,182,212,0.5)]"></span>
-              {tables.filter(t => t.status === 'available').length} Libres
-            </div>
-            <div className="glass-card px-5 py-3 flex items-center gap-3 text-xs font-black uppercase tracking-widest text-brand-accent">
-              <Users size={18} />
-              {tables.filter(t => t.status !== 'available').length} Ocupadas
-            </div>
+            <button 
+              onClick={() => setIsExternalOrdersOpen(true)}
+              className="glass-card px-5 py-3 flex items-center gap-3 text-xs font-black uppercase tracking-widest text-brand-text/60 hover:text-white transition-all relative"
+            >
+              <Package size={18} /> Externas
+              {tables.filter(t => t.type === 'takeaway' || t.type === 'delivery').length > 0 && (
+                <span className="absolute -top-2 -right-2 w-5 h-5 bg-brand-highlight text-brand-dark rounded-full flex items-center justify-center text-[10px] font-black border-2 border-brand-dark">
+                  {tables.filter(t => t.type === 'takeaway' || t.type === 'delivery').length}
+                </span>
+              )}
+            </button>
           </div>
         </header>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-          <AnimatePresence>
-            {tables.map((table, idx) => (
-              <TableCard key={table.id} table={table} onSelect={handleTableSelect} idx={idx} onDelete={deleteTable} />
-            ))}
-          </AnimatePresence>
+        <div className="flex flex-col lg:flex-row gap-8">
+          <div className="flex-1">
+            <h2 className="text-xs font-black text-brand-text/20 uppercase tracking-[0.4em] mb-6 flex items-center gap-4">
+              <span className="w-8 h-[1px] bg-brand-border" />
+              Distribución del Comedor
+              <span className="flex-1 h-[1px] bg-brand-border" />
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              <AnimatePresence>
+                {tables.filter(t => !t.type || t.type === 'table').map((table, idx) => (
+                  <TableCard key={table.id} table={table} onSelect={handleTableSelect} idx={idx} onDelete={deleteTable} />
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <aside className="hidden lg:block w-80 shrink-0">
+            <h2 className="text-xs font-black text-brand-text/20 uppercase tracking-[0.4em] mb-6 flex items-center gap-4">
+              <span className="w-8 h-[1px] bg-brand-border" />
+              Órdenes Externas
+            </h2>
+            <div className="space-y-4">
+              {tables.filter(t => t.type === 'takeaway' || t.type === 'delivery').length === 0 ? (
+                <div className="glass-card p-10 text-center opacity-20 flex flex-col items-center gap-4">
+                  <Package size={40} />
+                  <p className="text-[10px] font-black uppercase tracking-widest">Sin órdenes activas</p>
+                </div>
+              ) : (
+                tables.filter(t => t.type === 'takeaway' || t.type === 'delivery').map((table, idx) => (
+                  <ExternalOrderCard key={table.id} table={table} onSelect={handleTableSelect} idx={idx} />
+                ))
+              )}
+            </div>
+          </aside>
         </div>
       </div>
+
+      <AnimatePresence>
+        {isExternalOrdersOpen && (
+          <div className="fixed inset-0 z-[150] lg:hidden">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsExternalOrdersOpen(false)}
+              className="absolute inset-0 bg-brand-dark/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              className="absolute right-0 top-0 bottom-0 w-full max-w-sm bg-brand-dark border-l border-brand-border p-8 flex flex-col"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-xl font-black text-white uppercase tracking-widest flex items-center gap-3">
+                  <Package size={22} className="text-brand-highlight" /> Órdenes Externas
+                </h2>
+                <button onClick={() => setIsExternalOrdersOpen(false)} className="p-2 text-brand-text/40">
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
+                {tables.filter(t => t.type === 'takeaway' || t.type === 'delivery').map((table, idx) => (
+                  <ExternalOrderCard 
+                    key={table.id} 
+                    table={table} 
+                    onSelect={(t) => {
+                      handleTableSelect(t);
+                      setIsExternalOrdersOpen(false);
+                    }} 
+                    idx={idx} 
+                  />
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <TakeawayModal 
+        isOpen={isTakeawayModalOpen}
+        onClose={() => setIsTakeawayModalOpen(false)}
+        onConfirm={confirmCreateTakeaway}
+      />
 
       <TableNameModal 
         isOpen={isTableNameModalOpen}
@@ -409,6 +758,32 @@ export default function POSPage() {
         onConfirm={confirmCreateTable}
       />
     </main>
+  );
+}
+
+function ExternalOrderCard({ table, onSelect, idx }: { table: Table, onSelect: (t: Table) => void, idx: number }) {
+  const isTakeaway = table.type === 'takeaway';
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: idx * 0.05 }}
+      whileHover={{ scale: 1.02, x: -5 }}
+      onClick={() => onSelect(table)}
+      className="glass-card p-4 flex items-center gap-4 cursor-pointer hover:border-brand-highlight/30 group relative overflow-hidden"
+    >
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${isTakeaway ? 'bg-brand-accent/10 text-brand-accent' : 'bg-brand-highlight/10 text-brand-highlight'}`}>
+        {isTakeaway ? <ShoppingBag size={20} /> : <Bike size={20} />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-black text-white text-sm truncate uppercase tracking-tight">{table.number}</p>
+        <p className="text-[9px] font-black text-brand-text/30 uppercase tracking-widest">
+          {isTakeaway ? 'Para Llevar' : 'Delivery'} • {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(table.currentTotalUsd || 0)}
+        </p>
+      </div>
+      <ArrowRight size={16} className="text-brand-text/10 group-hover:text-brand-highlight transition-colors" />
+    </motion.div>
   );
 }
 
@@ -464,7 +839,11 @@ function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect:
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-brand-text/40 text-[10px] font-black uppercase">
             {config.icon}
-            <span>{table.startTime}</span>
+            <span>
+              {table.startTime 
+                ? new Date(table.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                : ''}
+            </span>
           </div>
           <div>
             <p className="text-xl font-black text-white leading-none tracking-tighter">
@@ -479,6 +858,118 @@ function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect:
         </div>
       )}
     </motion.div>
+  );
+}
+
+function TakeawayModal({ isOpen, onClose, onConfirm }: { isOpen: boolean, onClose: () => void, onConfirm: (name: string, type: 'takeaway' | 'delivery') => void }) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState<'takeaway' | 'delivery'>('takeaway');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-brand-dark/80 backdrop-blur-md flex items-center justify-center z-[250] p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="glass-card p-10 w-full max-w-md shadow-2xl relative overflow-hidden border-brand-highlight/20"
+      >
+        <div className="absolute top-0 left-0 w-full h-1 bg-brand-highlight/50" />
+        
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Orden Externa</h2>
+        <p className="text-brand-text/40 mb-8 font-bold text-xs uppercase tracking-widest">Identifica el pedido</p>
+        
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <button 
+            onClick={() => setType('takeaway')}
+            className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${type === 'takeaway' ? 'border-brand-accent bg-brand-accent/10 text-brand-accent' : 'border-brand-border/30 text-brand-text/40'}`}
+          >
+            <ShoppingBag size={24} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Llevar</span>
+          </button>
+          <button 
+            onClick={() => setType('delivery')}
+            className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${type === 'delivery' ? 'border-brand-highlight bg-brand-highlight/10 text-brand-highlight' : 'border-brand-border/30 text-brand-text/40'}`}
+          >
+            <Bike size={24} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Delivery</span>
+          </button>
+        </div>
+
+        <input 
+          autoFocus
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onConfirm(name, type)}
+          className="w-full bg-brand-dark/50 border border-brand-border rounded-2xl p-6 text-2xl font-black text-white focus:border-brand-highlight focus:ring-4 focus:ring-brand-highlight/10 transition-all outline-none mb-8 text-center placeholder:text-brand-text/10"
+          placeholder="Nombre del Cliente"
+        />
+
+        <div className="grid grid-cols-2 gap-4">
+          <button 
+            onClick={onClose}
+            className="p-4 bg-brand-border/20 hover:bg-brand-border/40 text-brand-text font-black uppercase tracking-widest text-xs rounded-2xl transition-all"
+          >
+            Cancelar
+          </button>
+          <button 
+            onClick={() => onConfirm(name, type)}
+            className="p-4 bg-brand-highlight hover:bg-brand-highlight/90 text-brand-dark rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-brand-highlight/20 transition-all"
+          >
+            Confirmar
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function NoteModal({ isOpen, onClose, value, onConfirm }: { isOpen: boolean, onClose: () => void, value: string, onConfirm: (val: string) => void }) {
+  const [tempNote, setTempNote] = useState(value);
+
+  useEffect(() => {
+    setTempNote(value);
+  }, [value, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-brand-dark/80 backdrop-blur-md flex items-center justify-center z-[250] p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="glass-card p-10 w-full max-w-md shadow-2xl relative overflow-hidden border-brand-highlight/20"
+      >
+        <div className="absolute top-0 left-0 w-full h-1 bg-brand-highlight/50" />
+        
+        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Nota de Cocina</h2>
+        <p className="text-brand-text/40 mb-8 font-bold text-xs uppercase tracking-widest">Observaciones para el pedido</p>
+        
+        <textarea 
+          autoFocus
+          value={tempNote}
+          onChange={(e) => setTempNote(e.target.value)}
+          placeholder="Ej: Sin cebolla, término medio, etc..."
+          className="w-full bg-brand-dark/50 border border-brand-border rounded-2xl p-6 text-lg font-bold text-white focus:border-brand-highlight focus:ring-4 focus:ring-brand-highlight/10 transition-all outline-none mb-8 min-h-[150px] resize-none placeholder:text-brand-text/10"
+        />
+
+        <div className="grid grid-cols-2 gap-4">
+          <button 
+            onClick={onClose}
+            className="p-4 bg-brand-border/20 hover:bg-brand-border/40 text-brand-text font-black uppercase tracking-widest text-xs rounded-2xl transition-all"
+          >
+            Cancelar
+          </button>
+          <button 
+            onClick={() => onConfirm(tempNote)}
+            className="p-4 bg-brand-highlight hover:bg-brand-highlight/90 text-brand-dark rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-brand-highlight/20 transition-all"
+          >
+            Confirmar
+          </button>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 

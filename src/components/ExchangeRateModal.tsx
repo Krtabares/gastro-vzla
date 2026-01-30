@@ -4,20 +4,27 @@ import React, { useState, useEffect } from 'react';
 import { useCurrency } from '@/context/CurrencyContext';
 import { X, Save, TrendingUp, Percent, ArrowUpRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { User } from '@/lib/db';
 
 export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
   const { exchangeRate, setExchangeRate, iva, setIva, igtf, setIgtf, suggestedRate } = useCurrency();
   const [tempRate, setTempRate] = useState(exchangeRate);
   const [tempIva, setTempIva] = useState(iva * 100);
   const [tempIgtf, setTempIgtf] = useState(igtf * 100);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
     setTempRate(exchangeRate);
-  }, [exchangeRate]);
+    const userJson = localStorage.getItem('gastro_user');
+    if (userJson) setCurrentUser(JSON.parse(userJson));
+  }, [exchangeRate, isOpen]);
 
   if (!isOpen) return null;
 
+  const isAdmin = currentUser?.role === 'root' || currentUser?.role === 'admin';
+
   const handleSave = () => {
+    if (!isAdmin) return;
     setExchangeRate(tempRate);
     setIva(tempIva / 100);
     setIgtf(tempIgtf / 100);
@@ -25,6 +32,7 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
   };
 
   const applySuggested = () => {
+    if (!isAdmin) return;
     if (suggestedRate) {
       setTempRate(suggestedRate);
     }
@@ -39,7 +47,7 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
       >
         <div className="p-8 border-b border-brand-border/30 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-black text-white uppercase tracking-tight">Ecomomía</h2>
+            <h2 className="text-xl font-black text-white uppercase tracking-tight">Economía</h2>
             <p className="text-[10px] font-bold text-brand-text/40 uppercase tracking-widest mt-1">Configuración Fiscal</p>
           </div>
           <button onClick={onClose} className="p-2 glass-card hover:text-white transition-colors">
@@ -53,7 +61,7 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
               <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
                 <TrendingUp size={14} className="text-brand-accent" /> Tasa de Cambio (VES/$)
               </label>
-              {suggestedRate && suggestedRate !== tempRate && (
+              {isAdmin && suggestedRate && suggestedRate !== tempRate && (
                 <motion.button 
                   whileHover={{ scale: 1.05 }}
                   onClick={applySuggested}
@@ -67,9 +75,10 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
               <input 
                 type="number" 
                 step="0.01"
+                disabled={!isAdmin}
                 value={tempRate}
                 onChange={(e) => setTempRate(parseFloat(e.target.value) || 0)}
-                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-5 px-6 text-3xl font-black text-white focus:border-brand-accent focus:ring-4 focus:ring-brand-accent/10 outline-none transition-all tracking-tighter"
+                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-5 px-6 text-3xl font-black text-white focus:border-brand-accent focus:ring-4 focus:ring-brand-accent/10 outline-none transition-all tracking-tighter ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
               />
             </div>
           </div>
@@ -81,9 +90,10 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
               </label>
               <input 
                 type="number" 
+                disabled={!isAdmin}
                 value={tempIva}
                 onChange={(e) => setTempIva(parseFloat(e.target.value) || 0)}
-                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none"
+                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
               />
             </div>
             <div className="space-y-3">
@@ -92,9 +102,10 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
               </label>
               <input 
                 type="number" 
+                disabled={!isAdmin}
                 value={tempIgtf}
                 onChange={(e) => setTempIgtf(parseFloat(e.target.value) || 0)}
-                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none"
+                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
               />
             </div>
           </div>
@@ -105,14 +116,16 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
             onClick={onClose}
             className="flex-1 py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest text-brand-text/40 hover:bg-brand-border/20 transition-all"
           >
-            Cancelar
+            {isAdmin ? 'Cancelar' : 'Cerrar'}
           </button>
-          <button 
-            onClick={handleSave}
-            className="flex-1 bg-brand-accent hover:bg-brand-accent/90 text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 shadow-xl shadow-brand-accent/20 transition-all"
-          >
-            <Save size={18} strokeWidth={3} /> Guardar
-          </button>
+          {isAdmin && (
+            <button 
+              onClick={handleSave}
+              className="flex-1 bg-brand-accent hover:bg-brand-accent/90 text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 shadow-xl shadow-brand-accent/20 transition-all"
+            >
+              <Save size={18} strokeWidth={3} /> Guardar
+            </button>
+          )}
         </div>
       </motion.div>
     </div>

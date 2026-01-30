@@ -94,35 +94,6 @@ export default function UsersPage() {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-
-    if (!formData.username || !formData.password || !formData.name) {
-      setError('Todos los campos son obligatorios');
-      return;
-    }
-
-    if (users.find(u => u.username === formData.username)) {
-      setError('El nombre de usuario ya existe');
-      return;
-    }
-
-    const newUser: User = {
-      id: `user-${Date.now()}`,
-      ...formData
-    };
-
-    try {
-      await db.createUser(newUser);
-      setIsModalOpen(false);
-      setFormData({ username: '', password: '', name: '', role: 'cashier' });
-      loadUsers();
-    } catch (err) {
-      setError('Error al crear usuario');
-    }
-  }
-
   const filteredUsers = users.filter(u => 
     (u.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (u.username || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -204,6 +175,7 @@ export default function UsersPage() {
                       <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase flex items-center gap-1 ${
                         user.role === 'root' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
                         user.role === 'admin' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                        user.role === 'waiter' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
                         'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                       }`}>
                         <Shield size={12} />
@@ -283,6 +255,7 @@ export default function UsersPage() {
                         value={formData.role}
                         onChange={(e) => setFormData({...formData, role: e.target.value as User['role']})}
                       >
+                        <option value="waiter">Camarero (Solo Comandas)</option>
                         <option value="cashier">Cajero (Ventas y Cocina)</option>
                         <option value="admin">Administrador (Todo menos Usuarios)</option>
                         <option value="root">Superusuario (Todo)</option>

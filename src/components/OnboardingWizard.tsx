@@ -28,19 +28,31 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
   const [tempRate, setTempRate] = useState(exchangeRate);
   const [tempIva, setTempIva] = useState(iva * 100);
   const [tempIgtf, setTempIgtf] = useState(igtf * 100);
+  const [storageMode, setStorageMode] = useState<'local' | 'cloud'>('local');
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseKey, setSupabaseKey] = useState('');
 
   if (!isOpen) return null;
 
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   const nextStep = () => setStep(s => Math.min(s + 1, totalSteps));
   const prevStep = () => setStep(s => Math.max(s - 1, 1));
 
   const handleFinish = async () => {
+    localStorage.setItem('gastro_storage_mode', storageMode);
+    if (storageMode === 'cloud') {
+      localStorage.setItem('gastro_supabase_url', supabaseUrl);
+      localStorage.setItem('gastro_supabase_key', supabaseKey);
+    }
+    
     setExchangeRate(tempRate);
     setIva(tempIva / 100);
     setIgtf(tempIgtf / 100);
 
+    // Re-instanciar DB o recargar para aplicar cambios si es necesario
+    // Pero por ahora solo guardamos y cerramos
+    
     // Crear 8 mesas por defecto en la base de datos si no hay mesas
     try {
       const existingTables = await db.getTables();
@@ -58,6 +70,7 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
     }
 
     onClose();
+    window.location.reload(); // Recargar para que db.ts tome la nueva configuración
   };
 
   return (
@@ -76,7 +89,7 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
             </div>
           </div>
           <div className="flex gap-1">
-            {[1, 2, 3, 4].map((s) => (
+            {[1, 2, 3, 4, 5].map((s) => (
               <div 
                 key={s} 
                 className={`h-1.5 w-8 rounded-full transition-all ${s <= step ? 'bg-blue-600' : 'bg-gray-200'}`}
@@ -92,7 +105,71 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
               <div className="space-y-2">
                 <h3 className="text-2xl font-black text-gray-900">Bienvenido a GastroVnzla</h3>
                 <p className="text-gray-500 leading-relaxed text-lg">
-                  Vamos a dejar tu sistema listo para operar en Venezuela. Comencemos configurando la <strong>Tasa BCV</strong> del día.
+                  Elige cómo quieres guardar tus datos. Puedes cambiar esto más tarde.
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-1 gap-4">
+                <button 
+                  onClick={() => setStorageMode('local')}
+                  className={`p-6 rounded-[2rem] border-2 text-left transition-all ${storageMode === 'local' ? 'border-blue-600 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
+                >
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className={`p-3 rounded-2xl ${storageMode === 'local' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                      <LayoutDashboard size={24} />
+                    </div>
+                    <span className={`text-xl font-black ${storageMode === 'local' ? 'text-blue-900' : 'text-gray-400'}`}>Local (Solo este PC)</span>
+                  </div>
+                  <p className="text-sm text-gray-500 pl-16">Tus datos se guardan en el disco duro. Es más rápido y no requiere internet para funcionar.</p>
+                </button>
+
+                <button 
+                  onClick={() => setStorageMode('cloud')}
+                  className={`p-6 rounded-[2rem] border-2 text-left transition-all ${storageMode === 'cloud' ? 'border-blue-600 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}
+                >
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className={`p-3 rounded-2xl ${storageMode === 'cloud' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                      <TrendingUp size={24} />
+                    </div>
+                    <span className={`text-xl font-black ${storageMode === 'cloud' ? 'text-blue-900' : 'text-gray-400'}`}>Cloud (Multidispositivo)</span>
+                  </div>
+                  <p className="text-sm text-gray-500 pl-16">Usa Supabase para sincronizar camareros con tablets y móviles. Requiere internet.</p>
+                </button>
+              </div>
+
+              {storageMode === 'cloud' && (
+                <div className="space-y-4 animate-in fade-in zoom-in duration-300 bg-white p-6 rounded-3xl border border-blue-100 shadow-sm">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Supabase URL</label>
+                    <input 
+                      type="text" 
+                      value={supabaseUrl}
+                      onChange={(e) => setSupabaseUrl(e.target.value)}
+                      placeholder="https://xyz.supabase.co"
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 text-sm font-medium outline-none focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Supabase Anon Key</label>
+                    <input 
+                      type="password" 
+                      value={supabaseKey}
+                      onChange={(e) => setSupabaseKey(e.target.value)}
+                      placeholder="eyJhbG..."
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 text-sm font-medium outline-none focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-gray-900">Tasa de Cambio</h3>
+                <p className="text-gray-500 leading-relaxed text-lg">
+                  Configura la <strong>Tasa BCV</strong> del día para el cálculo automático en bolívares.
                 </p>
               </div>
               <div className="bg-blue-50 p-8 rounded-[2rem] border border-blue-100 space-y-4">
@@ -105,14 +182,11 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
                   onChange={(e) => setTempRate(parseFloat(e.target.value) || 0)}
                   className="w-full bg-white border-2 border-transparent focus:border-blue-500 rounded-2xl py-4 px-6 text-4xl font-black text-blue-900 outline-none transition-all shadow-sm"
                 />
-                <p className="text-sm text-blue-400 italic font-medium">
-                  * Todos tus platos se cargarán en USD y se cobrarán a esta tasa.
-                </p>
               </div>
             </div>
           )}
 
-          {step === 2 && (
+          {step === 3 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
               <div className="space-y-2">
                 <h3 className="text-2xl font-black text-gray-900">Impuestos y Fiscalidad</h3>

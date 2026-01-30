@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useCurrency } from '@/context/CurrencyContext';
-import { X, Receipt, CreditCard, Banknote, Smartphone, CheckCircle2, DollarSign, Lock } from 'lucide-react';
-import { db } from '@/lib/db';
+import { X, Receipt, CreditCard, Banknote, Smartphone, CheckCircle2, DollarSign, Lock, ShieldAlert } from 'lucide-react';
+import { db, User } from '@/lib/db';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface BillingModalProps {
@@ -13,18 +13,26 @@ interface BillingModalProps {
   subtotalUsd: number;
   items: any[];
   onComplete: () => void;
+  type?: 'table' | 'takeaway' | 'delivery';
 }
 
-export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd, items, onComplete }: BillingModalProps) {
+export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd, items, onComplete, type }: BillingModalProps) {
   const { formatUsd, formatVes, usdToVes, iva, igtf } = useCurrency();
   const [paymentMethod, setPaymentMethod] = useState<'cash_usd' | 'cash_ves' | 'zelle' | 'pago_movil' | 'card'>('cash_usd');
   const [isLicenseActive, setIsLicenseActive] = useState(true);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
+    const storedUser = localStorage.getItem('gastro_user');
+    if (storedUser) setCurrentUser(JSON.parse(storedUser));
+    
     if (isOpen) {
       checkLicense();
     }
   }, [isOpen]);
+
+  const isWaiter = currentUser?.role === 'waiter';
+  const canFinalize = isLicenseActive && !isWaiter;
 
   const checkLicense = async () => {
     const license = await db.getLicenseStatus();
@@ -65,16 +73,18 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
       <motion.div 
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="glass-card w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col md:flex-row border-brand-accent/20"
+        className="glass-card w-full max-w-4xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col md:flex-row border-brand-accent/20"
       >
         {/* Resumen de Factura */}
-        <div className="bg-brand-dark/40 p-10 w-full md:w-1/2 border-b md:border-b-0 md:border-r border-brand-border/30">
+        <div className="bg-brand-dark/40 p-10 w-full md:w-1/2 border-b md:border-b-0 md:border-r border-brand-border/30 overflow-y-auto custom-scrollbar">
           <div className="flex items-center gap-3 mb-10 text-brand-text/30">
             <Receipt size={24} />
             <span className="font-black uppercase tracking-[0.3em] text-[10px]">Facturación</span>
           </div>
 
-          <h2 className="text-4xl font-black text-white mb-8 tracking-tighter">Mesa #{tableNumber}</h2>
+          <h2 className="text-4xl font-black text-white mb-8 tracking-tighter">
+            {type && type !== 'table' ? tableNumber : `Mesa #${tableNumber}`}
+          </h2>
 
           <div className="space-y-5 border-b border-brand-border/30 pb-8 mb-8">
             <div className="flex justify-between text-brand-text/60 font-medium">
@@ -169,17 +179,21 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
 
           <div className="mt-8 space-y-4">
             <motion.button 
-              whileHover={isLicenseActive ? { scale: 1.02 } : {}}
-              whileTap={isLicenseActive ? { scale: 0.98 } : {}}
+              whileHover={canFinalize ? { scale: 1.02 } : {}}
+              whileTap={canFinalize ? { scale: 0.98 } : {}}
               onClick={handleFinalize}
-              disabled={!isLicenseActive}
+              disabled={!canFinalize}
               className={`w-full py-5 rounded-2xl font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 shadow-2xl transition-all ${
-                isLicenseActive 
+                canFinalize 
                   ? 'bg-brand-accent text-white shadow-brand-accent/20' 
                   : 'bg-brand-border/20 text-brand-text/20 cursor-not-allowed border border-brand-border/30'
               }`}
             >
-              {isLicenseActive ? (
+              {isWaiter ? (
+                <>
+                  <ShieldAlert size={20} /> Solo Cajeros
+                </>
+              ) : isLicenseActive ? (
                 <>
                   <CheckCircle2 size={20} strokeWidth={3} /> Finalizar Operación
                 </>

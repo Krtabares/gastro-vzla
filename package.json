@@ -8,8 +8,28 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "seed": "node scripts/seed.js",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "next build && electron-builder"
+    "electron:build": "next build && electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "com.gastro.vnzla",
+    "productName": "GastroVnzla",
+    "files": [
+      "out/**/*",
+      "main.js",
+      "preload.js",
+      "package.json",
+      "public/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "asar": true
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
@@ -20,6 +40,7 @@
     "escpos": "^3.0.0-alpha.6",
     "escpos-serialport": "^3.0.0-alpha.4",
     "escpos-usb": "^3.0.0-alpha.4",
+    "express": "^5.2.1",
     "framer-motion": "^12.29.2",
     "geist": "^1.5.1",
     "lodash": "^4.17.23",

@@ -7,7 +7,7 @@ import {
   RefreshCcw, 
   Trash2, 
   Database, 
-  Settings, 
+  Settings as SettingsIcon, 
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -16,7 +16,10 @@ import {
   Clock,
   Calendar,
   Box,
-  Printer
+  Printer,
+  Cloud,
+  HardDrive,
+  Save
 } from "lucide-react";
 import Link from "next/link";
 import PrinterSettingsModal from "@/components/PrinterSettingsModal";
@@ -34,13 +37,31 @@ export default function SettingsPage() {
   const [licenseInfo, setLicenseInfo] = useState<{ status: string, daysLeft: number, expiryDate?: string } | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
 
+  // Cloud Settings
+  const [storageMode, setStorageMode] = useState<'local' | 'cloud'>('local');
+  const [supabaseUrl, setSupabaseUrl] = useState("");
+  const [supabaseKey, setSupabaseKey] = useState("");
+
   useEffect(() => {
     const userJson = localStorage.getItem("gastro_user");
     if (userJson) {
       setCurrentUser(JSON.parse(userJson));
     }
     loadLicenseInfo();
+    
+    // Cargar configuración de almacenamiento
+    setStorageMode((localStorage.getItem('gastro_storage_mode') as 'local' | 'cloud') || 'local');
+    setSupabaseUrl(localStorage.getItem('gastro_supabase_url') || "");
+    setSupabaseKey(localStorage.getItem('gastro_supabase_key') || "");
   }, []);
+
+  const handleSaveCloudConfig = () => {
+    localStorage.setItem('gastro_storage_mode', storageMode);
+    localStorage.setItem('gastro_supabase_url', supabaseUrl);
+    localStorage.setItem('gastro_supabase_key', supabaseKey);
+    setMessage({ text: "Configuración guardada. Reiniciando para aplicar...", type: 'success' });
+    setTimeout(() => window.location.reload(), 1500);
+  };
 
   const loadLicenseInfo = async () => {
     const info = await db.getLicenseStatus();
@@ -98,10 +119,10 @@ export default function SettingsPage() {
       <RoleGuard allowedRoles={['root']}>
         <main className="p-6 max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
           <header className="flex items-center justify-between border-b pb-6">
-            <div className="flex items-center gap-4">
-              <div className="bg-slate-100 p-3 rounded-2xl">
-                <Settings className="text-slate-600" size={32} />
-              </div>
+              <div className="flex items-center gap-4">
+                <div className="bg-slate-100 p-3 rounded-2xl">
+                  <SettingsIcon className="text-slate-600" size={32} />
+                </div>
               <div>
                 <h1 className="text-3xl font-black text-slate-900 italic tracking-tight uppercase">
                   Configuración <span className="text-blue-600">Avanzada</span>
@@ -131,6 +152,77 @@ export default function SettingsPage() {
               {message.text}
             </div>
           )}
+
+          {/* Gestión de Almacenamiento (Local vs Cloud) */}
+          <section className="bg-white rounded-[2rem] border-2 border-slate-100 shadow-sm overflow-hidden">
+            <div className="bg-slate-900 p-6 flex items-center gap-3">
+              <Database className="text-white" size={24} />
+              <h2 className="text-white font-black uppercase tracking-wider">Modo de Almacenamiento</h2>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setStorageMode('local')}
+                  className={`p-6 rounded-3xl border-2 text-left transition-all ${storageMode === 'local' ? 'border-blue-600 bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}
+                >
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className={`p-3 rounded-2xl ${storageMode === 'local' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <HardDrive size={24} />
+                    </div>
+                    <span className={`text-xl font-black ${storageMode === 'local' ? 'text-blue-900' : 'text-slate-400'}`}>Local</span>
+                  </div>
+                  <p className="text-sm text-slate-500 pl-16">Los datos se guardan en este dispositivo. Rápido y privado.</p>
+                </button>
+
+                <button 
+                  onClick={() => setStorageMode('cloud')}
+                  className={`p-6 rounded-3xl border-2 text-left transition-all ${storageMode === 'cloud' ? 'border-blue-600 bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}
+                >
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className={`p-3 rounded-2xl ${storageMode === 'cloud' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <Cloud size={24} />
+                    </div>
+                    <span className={`text-xl font-black ${storageMode === 'cloud' ? 'text-blue-900' : 'text-slate-400'}`}>Cloud</span>
+                  </div>
+                  <p className="text-sm text-slate-500 pl-16">Sincronización multidispositivo con Supabase.</p>
+                </button>
+              </div>
+
+              {storageMode === 'cloud' && (
+                <div className="space-y-4 animate-in fade-in zoom-in duration-300 bg-slate-50 p-6 rounded-3xl border border-slate-200">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Supabase URL</label>
+                      <input 
+                        type="text" 
+                        value={supabaseUrl}
+                        onChange={(e) => setSupabaseUrl(e.target.value)}
+                        placeholder="https://xyz.supabase.co"
+                        className="w-full bg-white border-2 border-slate-100 rounded-xl py-3 px-4 outline-none focus:border-blue-500 font-bold text-slate-700"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Supabase Anon Key</label>
+                      <input 
+                        type="password" 
+                        value={supabaseKey}
+                        onChange={(e) => setSupabaseKey(e.target.value)}
+                        placeholder="eyJhbG..."
+                        className="w-full bg-white border-2 border-slate-100 rounded-xl py-3 px-4 outline-none focus:border-blue-500 font-bold text-slate-700"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleSaveCloudConfig}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-blue-200 flex items-center justify-center gap-2 uppercase tracking-widest"
+              >
+                <Save size={20} /> Guardar Cambios de Almacenamiento
+              </button>
+            </div>
+          </section>
 
           {/* Gestión de Licencia (Solo Root) */}
           {isRoot && (
@@ -337,12 +429,12 @@ export default function SettingsPage() {
           )}
 
           <footer className="text-center">
-            <div className="inline-flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-full border border-slate-200">
-              <Database size={14} className="text-slate-400" />
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                Motor de Datos: NeDB v1.1.0 • Storage: Local Device
-              </p>
-            </div>
+              <div className="inline-flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-full border border-slate-200">
+                <Database size={14} className="text-slate-400" />
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Motor de Datos: {storageMode === 'cloud' ? 'Supabase Cloud' : 'SQLite/Local'} • Storage: {storageMode.toUpperCase()}
+                </p>
+              </div>
           </footer>
         </main>
       </RoleGuard>

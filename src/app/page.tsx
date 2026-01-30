@@ -72,7 +72,7 @@ export default function Home() {
       ]);
 
       setDailySalesUsd(todaySales.reduce((acc, sale) => acc + sale.totalUsd, 0));
-      setActiveTablesCount(tables.filter(t => t.status !== 'available').length);
+      setActiveTablesCount(tables.filter(t => t.status !== 'available' && (!t.type || t.type === 'table')).length);
     } catch (error) {
       console.error("Error loading dashboard data:", error);
     }
@@ -145,20 +145,24 @@ export default function Home() {
           accent="highlight" 
           delay={0.1}
         />
-        <StatCard 
-          title="Ventas Hoy (USD)" 
-          value={maskValue(formatUsd(dailySalesUsd))} 
-          icon={<DollarSign />} 
-          accent="accent" 
-          delay={0.2}
-        />
-        <StatCard 
-          title="Ventas Hoy (VES)" 
-          value={maskValue(formatVes(usdToVes(dailySalesUsd)))} 
-          icon={<TrendingUp />} 
-          accent="highlight" 
-          delay={0.3}
-        />
+        {(currentUser?.role === 'root' || currentUser?.role === 'admin') && (
+          <>
+            <StatCard 
+              title="Ventas Hoy (USD)" 
+              value={maskValue(formatUsd(dailySalesUsd))} 
+              icon={<DollarSign />} 
+              accent="accent" 
+              delay={0.2}
+            />
+            <StatCard 
+              title="Ventas Hoy (VES)" 
+              value={maskValue(formatVes(usdToVes(dailySalesUsd)))} 
+              icon={<TrendingUp />} 
+              accent="highlight" 
+              delay={0.3}
+            />
+          </>
+        )}
         <StatCard 
           title="Órdenes Pendientes" 
           value={maskValue(orders.length.toString())} 
