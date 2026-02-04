@@ -17,12 +17,13 @@ export interface Order {
   dispatchedAt?: Date;
   type?: 'table' | 'takeaway' | 'delivery';
   note?: string;
+  zoneId?: string;
 }
 
 interface OrdersContextType {
   orders: Order[];
   dailySalesUsd: number;
-  addOrder: (tableNumber: string, items: OrderItem[], note?: string, type?: 'table' | 'takeaway' | 'delivery') => void;
+  addOrder: (tableNumber: string, items: OrderItem[], note?: string, type?: 'table' | 'takeaway' | 'delivery', zoneId?: string) => void;
   markAsReady: (orderId: string) => void;
   revertToKitchen: (orderId: string) => void;
   updateOrderNote: (tableNumber: string, note: string) => Promise<void>;
@@ -63,18 +64,20 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     const data = await db.getOrders();
     setOrders(data.map((o: any) => ({
       ...o,
+      items: typeof o.items === 'string' ? JSON.parse(o.items) : o.items,
       createdAt: new Date(o.createdAt),
       dispatchedAt: o.dispatchedAt ? new Date(o.dispatchedAt) : undefined
     })));
   };
 
-  const addOrder = async (tableNumber: string, items: OrderItem[], note?: string, type: 'table' | 'takeaway' | 'delivery' = 'table') => {
+  const addOrder = async (tableNumber: string, items: OrderItem[], note?: string, type: 'table' | 'takeaway' | 'delivery' = 'table', zoneId?: string) => {
     const newOrder = {
       tableNumber,
       items,
       status: 'pending' as const,
       note,
       type,
+      zoneId,
       createdAt: new Date().toISOString(),
     };
     
@@ -84,24 +87,48 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const markAsReady = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
     if (order) {
-      await db.updateTableStatus(order.tableNumber, 'ready');
+      // Primero marcamos la orden como lista en la DB
       await db.updateOrder(orderId, { 
         status: 'ready',
         dispatchedAt: new Date().toISOString()
       });
+
+      // Obtenemos el estado más reciente de todas las órdenes para esta mesa
+      const allOrders = await db.getOrders();
+      const tableOrders = allOrders.filter((o: any) => 
+        o.tableNumber.trim() === order.tableNumber.trim() || 
+        parseInt(o.tableNumber) === parseInt(order.tableNumber)
+      );
+      
+      // Una mesa está "ready" solo si TODAS sus órdenes están "ready"
+      const allReady = tableOrders.every((o: any) => o.status === 'ready');
+      
+      if (allReady) {
+        await db.updateTableStatus(order.tableNumber, 'ready');
+      } else {
+        await db.updateTableStatus(order.tableNumber, 'partially_ready');
+      }
     }
   };
 
   const revertToKitchen = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
     if (order) {
-      // Si es una mesa física, volvemos a ponerla en 'occupied'
-      // Si es externa, usualmente ya está en 'occupied' o 'ready'
-      await db.updateTableStatus(order.tableNumber, 'occupied');
       await db.updateOrder(orderId, { 
         status: 'pending',
         dispatchedAt: null
       });
+
+      const allOrders = await db.getOrders();
+      const tableOrders = allOrders.filter((o: any) => o.tableNumber === order.tableNumber);
+      
+      const hasReady = tableOrders.some((o: any) => o.status === 'ready');
+      
+      if (hasReady) {
+        await db.updateTableStatus(order.tableNumber, 'partially_ready');
+      } else {
+        await db.updateTableStatus(order.tableNumber, 'occupied');
+      }
     }
   };
 

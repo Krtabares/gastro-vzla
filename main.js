@@ -58,8 +58,27 @@ function startLocalServer() {
 
   // Orders for Kitchen Monitor
   expressApp.get('/api/orders', async (req, res) => {
-    const orders = await db.tables.find({ status: { $in: ['occupied', 'billing', 'ready'] } });
+    const orders = await db.orders.find({}).sort({ createdAt: 1 });
     res.json(orders);
+  });
+
+  expressApp.post('/api/orders', async (req, res) => {
+    const order = req.body;
+    await db.orders.insert(order);
+    res.json({ success: true });
+  });
+
+  expressApp.patch('/api/orders/:id', async (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    await db.orders.update({ id }, { $set: updates });
+    res.json({ success: true });
+  });
+
+  expressApp.delete('/api/orders/:id', async (req, res) => {
+    const { id } = req.params;
+    await db.orders.remove({ id });
+    res.json({ success: true });
   });
 
   // Tables
@@ -78,6 +97,12 @@ function startLocalServer() {
   expressApp.get('/api/categories', async (req, res) => {
     const categories = await db.categories.find({});
     res.json(categories);
+  });
+
+  // Zones
+  expressApp.get('/api/zones', async (req, res) => {
+    const zones = await db.zones.find({});
+    res.json(zones);
   });
 
   // Print Order to Kitchen (Mock for now or map to actual print)
@@ -167,6 +192,7 @@ const db = {
   license: Datastore.create(path.join(dbDir, 'license.db')),
   categories: Datastore.create(path.join(dbDir, 'categories.db')),
   orders: Datastore.create(path.join(dbDir, 'orders.db')),
+  zones: Datastore.create(path.join(dbDir, 'zones.db')),
 };
 
 // Mapeo de códigos simples de licencia
@@ -261,7 +287,7 @@ function createWindow() {
   }
 }
 
-function createKitchenWindow() {
+function createKitchenWindow(queryParams = '') {
   const kitchenWin = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -277,15 +303,15 @@ function createKitchenWindow() {
   kitchenWin.setMenuBarVisibility(false);
 
   const startUrl = isDev 
-    ? 'http://localhost:3000/kitchen' 
-    : `file://${path.join(__dirname, 'out/kitchen.html')}`;
+    ? `http://localhost:3000/kitchen${queryParams}` 
+    : `file://${path.join(__dirname, 'out/kitchen.html')}${queryParams}`;
 
   kitchenWin.loadURL(startUrl);
 }
 
 // Handlers IPC para NeDB
-ipcMain.handle('open-kitchen-window', async () => {
-  createKitchenWindow();
+ipcMain.handle('open-kitchen-window', async (event, queryParams = '') => {
+  createKitchenWindow(queryParams);
   return { success: true };
 });
 
@@ -457,6 +483,20 @@ ipcMain.handle('db-delete-category', async (event, id) => {
   return { success: true };
 });
 
+ipcMain.handle('db-get-zones', async () => {
+  return await db.zones.find({});
+});
+
+ipcMain.handle('db-save-zone', async (event, zone) => {
+  await db.zones.update({ id: zone.id }, zone, { upsert: true });
+  return { success: true };
+});
+
+ipcMain.handle('db-delete-zone', async (event, id) => {
+  await db.zones.remove({ id });
+  return { success: true };
+});
+
 // Handlers de Licencia
 ipcMain.handle('db-get-license', async () => {
   const license = await db.license.findOne({});
@@ -506,6 +546,7 @@ ipcMain.handle('db-reset', async (event, { mode }) => {
       await db.users.remove({}, { multi: true });
       await db.categories.remove({}, { multi: true });
       await db.orders.remove({}, { multi: true });
+      await db.zones.remove({}, { multi: true });
     } else {
       // Reinicio parcial (Cerrar sesión de ventas y limpiar mesas)
       await db.sales.update({ status: { $ne: 'closed' } }, { $set: { status: 'closed' } }, { multi: true });

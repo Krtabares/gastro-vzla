@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Save, Utensils, DollarSign, Tag, Box, Layers } from 'lucide-react';
-import { db, Category, Product } from '@/lib/db';
+import { db, Category, Product, PreparationZone } from '@/lib/db';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ProductModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (product: { id?: string, name: string, category: string, priceUsd: number, stock?: number, minStock?: number }) => void;
+  onSave: (product: { id?: string, name: string, category: string, priceUsd: number, stock?: number, minStock?: number, zoneId?: string }) => void;
   editingProduct?: Product | null;
 }
 
@@ -19,11 +19,13 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
   const [stock, setStock] = useState('');
   const [minStock, setMinStock] = useState('');
   const [hasStock, setHasStock] = useState(false);
+  const [zoneId, setZoneId] = useState('');
   const [customCategories, setCustomCategories] = useState<Category[]>([]);
+  const [zones, setZones] = useState<PreparationZone[]>([]);
 
   useEffect(() => {
     if (isOpen) {
-      loadCategories();
+      loadInitialData();
       if (editingProduct) {
         setName(editingProduct.name);
         setCategory(editingProduct.category);
@@ -31,26 +33,35 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
         setHasStock(editingProduct.stock !== undefined && editingProduct.stock !== -1);
         setStock(editingProduct.stock?.toString() || '');
         setMinStock(editingProduct.minStock?.toString() || '');
+        setZoneId(editingProduct.zoneId || '');
       } else {
         setName('');
         setPriceUsd('');
         setStock('');
         setMinStock('');
         setHasStock(false);
+        setZoneId('');
       }
     }
   }, [isOpen, editingProduct]);
 
-  const loadCategories = async () => {
-    const cats = await db.getCategories();
+  const loadInitialData = async () => {
+    const [cats, zns] = await Promise.all([
+      db.getCategories(),
+      db.getZones()
+    ]);
     setCustomCategories(cats);
+    setZones(zns);
     
     if (editingProduct) {
       setCategory(editingProduct.category);
-    } else if (cats.length > 0) {
-      setCategory(cats[0].name);
+      setZoneId(editingProduct.zoneId || '');
     } else {
-      setCategory('');
+      if (cats.length > 0) setCategory(cats[0].name);
+      else setCategory('');
+      
+      if (zns.length > 0) setZoneId(zns[0].id);
+      else setZoneId('');
     }
   };
 
@@ -65,7 +76,8 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
       category,
       priceUsd: parseFloat(priceUsd),
       stock: hasStock ? parseFloat(stock) : undefined,
-      minStock: hasStock ? parseFloat(minStock) : undefined
+      minStock: hasStock ? parseFloat(minStock) : undefined,
+      zoneId: zoneId || undefined
     });
     setName('');
     setPriceUsd('');
@@ -142,24 +154,47 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
                   </div>
                 </div>
 
-                {/* Precio */}
-                <div className="space-y-3">
-                  <label className="text-[10px] font-black text-brand-text/30 uppercase tracking-[0.3em] flex items-center gap-2">
-                    <DollarSign size={14} className="text-green-400" /> Precio (USD)
-                  </label>
-                  <div className="relative">
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      required
-                      value={priceUsd}
-                      onChange={(e) => setPriceUsd(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-5 text-lg font-black text-white outline-none focus:border-brand-accent transition-all placeholder:text-brand-text/10 tabular-nums"
-                    />
+                  {/* Precio */}
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-brand-text/30 uppercase tracking-[0.3em] flex items-center gap-2">
+                      <DollarSign size={14} className="text-green-400" /> Precio (USD)
+                    </label>
+                    <div className="relative">
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        required
+                        value={priceUsd}
+                        onChange={(e) => setPriceUsd(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-5 text-lg font-black text-white outline-none focus:border-brand-accent transition-all placeholder:text-brand-text/10 tabular-nums"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Zona de Preparación */}
+                  <div className="space-y-3 col-span-full">
+                    <label className="text-[10px] font-black text-brand-text/30 uppercase tracking-[0.3em] flex items-center gap-2">
+                      <Layers size={14} className="text-brand-accent" /> Zona de Preparación
+                    </label>
+                    <div className="relative">
+                      <select 
+                        value={zoneId}
+                        onChange={(e) => setZoneId(e.target.value)}
+                        className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-5 text-xs font-black uppercase tracking-widest text-white outline-none focus:border-brand-accent appearance-none transition-all"
+                      >
+                        <option value="" className="bg-brand-card">General / Cocina</option>
+                        {zones.map(zone => (
+                          <option key={zone.id} value={zone.id} className="bg-brand-card">{zone.name}</option>
+                        ))}
+                      </select>
+                      <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-brand-text/20">
+                        <Tag size={16} />
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+
 
               {/* Inventario Toggle */}
               <div className="space-y-4 pt-4 border-t border-brand-border/20">

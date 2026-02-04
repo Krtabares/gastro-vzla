@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useCurrency } from "@/context/CurrencyContext";
-import { db, Product, Category } from "@/lib/db";
+import { db, Product, Category, PreparationZone } from "@/lib/db";
 import { 
   Plus, 
   Search, 
@@ -30,13 +30,20 @@ export default function MenuPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [zones, setZones] = useState<PreparationZone[]>([]);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
 
   useEffect(() => {
     loadProducts();
     loadCategories();
+    loadZones();
   }, []);
+
+  const loadZones = async () => {
+    const data = await db.getZones();
+    setZones(data);
+  };
 
   const loadCategories = async () => {
     const data = await db.getCategories();
@@ -48,14 +55,16 @@ export default function MenuPage() {
     setProducts(data);
   };
 
-  const handleSaveProduct = async (newProd: { id?: string, name: string, category: string, priceUsd: number, stock?: number }) => {
+  const handleSaveProduct = async (newProd: { id?: string, name: string, category: string, priceUsd: number, stock?: number, minStock?: number, zoneId?: string }) => {
     const product: Product = {
       id: newProd.id || Math.random().toString(36).substr(2, 9),
       name: newProd.name,
       category: newProd.category,
       price: newProd.priceUsd,
       available: editingProduct ? editingProduct.available : true,
-      stock: newProd.stock
+      stock: newProd.stock,
+      minStock: newProd.minStock,
+      zoneId: newProd.zoneId
     };
     await db.saveProduct(product);
     setEditingProduct(null);
@@ -184,6 +193,7 @@ export default function MenuPage() {
                   <thead>
                     <tr className="bg-brand-card/30">
                       <th className="px-8 py-5 text-[10px] font-black text-brand-text/30 uppercase tracking-widest">Plato / Bebida</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-brand-text/30 uppercase tracking-widest">Zona</th>
                       <th className="px-8 py-5 text-[10px] font-black text-brand-text/30 uppercase tracking-widest">Stock</th>
                       <th className="px-8 py-5 text-[10px] font-black text-brand-text/30 uppercase tracking-widest">Precio USD</th>
                       <th className="px-8 py-5 text-[10px] font-black text-brand-text/30 uppercase tracking-widest text-right">Acciones</th>
@@ -211,6 +221,11 @@ export default function MenuPage() {
                                 </span>
                               </div>
                             </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-brand-text/40">
+                              {zones.find(z => z.id === product.zoneId)?.name || 'General'}
+                            </span>
                           </td>
                           <td className="px-8 py-6 font-black">
                             {product.stock !== undefined && product.stock !== -1 ? (

@@ -8,12 +8,18 @@ export interface Product {
   available: boolean;
   stock?: number;
   minStock?: number;
+  zoneId?: string;
+}
+
+export interface PreparationZone {
+  id: string;
+  name: string;
 }
 
 export interface Table {
   id: string;
   number: string;
-  status: 'available' | 'occupied' | 'billing' | 'ready';
+  status: 'available' | 'occupied' | 'billing' | 'ready' | 'partially_ready';
   type?: 'table' | 'takeaway' | 'delivery';
   currentOrderId?: string | null;
   currentTotalUsd?: number | null;
@@ -38,6 +44,7 @@ export interface Order {
   note?: string;
   createdAt: string;
   dispatchedAt?: string;
+  zoneId?: string;
 }
 
 export interface Payment {
@@ -74,6 +81,8 @@ export interface Database {
   products: Product[];
   tables: Table[];
   sales: Sale[];
+  categories: Category[];
+  zones: PreparationZone[];
   settings: {
     exchangeRate: number;
     iva: number;
@@ -404,6 +413,9 @@ export const db = {
       const { data } = await supabase.from('orders').select('*').order('createdAt', { ascending: true });
       return data || [];
     }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/orders');
+    }
     if (isElectron) return await window.ipcRenderer.invoke('db-get-orders');
     return [];
   },
@@ -411,6 +423,10 @@ export const db = {
   async saveOrder(order: any): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').insert(order);
+      return;
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      await apiCall('/api/orders', 'POST', order);
       return;
     }
     if (isElectron) {
@@ -421,6 +437,10 @@ export const db = {
   async updateOrder(id: string, updates: any): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').update(updates).eq('id', id);
+      return;
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      await apiCall(`/api/orders/${id}`, 'PATCH', updates);
       return;
     }
     if (isElectron) {
@@ -460,6 +480,10 @@ export const db = {
       await supabase.from('orders').delete().eq('id', id);
       return;
     }
+    if (getStorageMode() === 'local' && !isElectron) {
+      await apiCall(`/api/orders/${id}`, 'DELETE');
+      return;
+    }
     if (isElectron) {
       await window.ipcRenderer.invoke('db-delete-order', id);
     }
@@ -491,6 +515,48 @@ export const db = {
     } else {
       const categories = await this.getCategories();
       localStorage.setItem('gastro_categories', JSON.stringify(categories.filter(c => c.id !== id)));
+    }
+  },
+
+  async getZones(): Promise<PreparationZone[]> {
+    if (getStorageMode() === 'cloud' && supabase) {
+      const { data } = await supabase.from('zones').select('*');
+      return data || [];
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/zones');
+    }
+    if (isElectron) return await window.ipcRenderer.invoke('db-get-zones');
+    const local = localStorage.getItem('gastro_zones');
+    return local ? JSON.parse(local) : [];
+  },
+
+  async saveZone(zone: PreparationZone): Promise<void> {
+    if (getStorageMode() === 'cloud' && supabase) {
+      await supabase.from('zones').upsert(zone);
+      return;
+    }
+    if (isElectron) {
+      await window.ipcRenderer.invoke('db-save-zone', zone);
+    } else {
+      const zones = await this.getZones();
+      const index = zones.findIndex(z => z.id === zone.id);
+      if (index > -1) zones[index] = zone;
+      else zones.push(zone);
+      localStorage.setItem('gastro_zones', JSON.stringify(zones));
+    }
+  },
+
+  async deleteZone(id: string): Promise<void> {
+    if (getStorageMode() === 'cloud' && supabase) {
+      await supabase.from('zones').delete().eq('id', id);
+      return;
+    }
+    if (isElectron) {
+      await window.ipcRenderer.invoke('db-delete-zone', id);
+    } else {
+      const zones = await this.getZones();
+      localStorage.setItem('gastro_zones', JSON.stringify(zones.filter(z => z.id !== id)));
     }
   },
 

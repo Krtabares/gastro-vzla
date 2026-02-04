@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useOrders } from "@/context/OrdersContext";
+import { db, PreparationZone } from "@/lib/db";
 import { 
   ChevronLeft, 
   Clock, 
@@ -12,29 +13,53 @@ import {
   StickyNote,
   BellRing,
   ShoppingBag,
-  Bike
+  Bike,
+  Layers
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function KitchenPage() {
+function KitchenContent() {
   const { orders, markAsReady, revertToKitchen } = useOrders();
+  const searchParams = useSearchParams();
+  const zoneIdParam = searchParams.get('zoneId');
+  
+  const [zones, setZones] = useState<PreparationZone[]>([]);
+  const [currentZone, setCurrentZone] = useState<PreparationZone | null>(null);
+
   const prevOrdersRef = useRef(orders);
   const audioNewRef = useRef<HTMLAudioElement | null>(null);
   const audioUpdateRef = useRef<HTMLAudioElement | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
 
-  const pendingOrders = orders.filter(o => o.status !== 'ready');
-  const historyOrders = orders
-    .filter(o => o.status === 'ready')
-    .sort((a, b) => (b.dispatchedAt?.getTime() || 0) - (a.dispatchedAt?.getTime() || 0));
-
   useEffect(() => {
+    loadZones();
     // Inicializar audios
     audioNewRef.current = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
     audioUpdateRef.current = new Audio("https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3");
   }, []);
+
+  const loadZones = async () => {
+    const zns = await db.getZones();
+    setZones(zns);
+    if (zoneIdParam) {
+      const zone = zns.find(z => z.id === zoneIdParam);
+      if (zone) setCurrentZone(zone);
+    }
+  };
+
+  // Filtrar órdenes por zona
+  const filteredOrders = orders.filter(o => {
+    if (!zoneIdParam) return !o.zoneId; // Si no hay param, mostramos lo que no tiene zona (general)
+    return o.zoneId === zoneIdParam;
+  });
+
+  const pendingOrders = filteredOrders.filter(o => o.status !== 'ready');
+  const historyOrders = filteredOrders
+    .filter(o => o.status === 'ready')
+    .sort((a, b) => (b.dispatchedAt?.getTime() || 0) - (a.dispatchedAt?.getTime() || 0));
 
   useEffect(() => {
     if (!audioEnabled) {
@@ -42,23 +67,27 @@ export default function KitchenPage() {
       return;
     }
 
-    const currentPendingLength = pendingOrders.length;
-    const prevPendingLength = prevOrdersRef.current.filter(o => o.status !== 'ready').length;
+    // Solo nos interesan los cambios en las órdenes filtradas por zona para el sonido
+    const prevFilteredPending = prevOrdersRef.current.filter(o => {
+      const isPending = o.status !== 'ready';
+      const isCorrectZone = !zoneIdParam ? !o.zoneId : o.zoneId === zoneIdParam;
+      return isPending && isCorrectZone;
+    });
 
-    if (currentPendingLength > prevPendingLength) {
-      // Nueva orden
+    if (pendingOrders.length > prevFilteredPending.length) {
+      // Nueva orden para esta zona
       audioNewRef.current?.play().catch(console.error);
-    } else if (currentPendingLength === prevPendingLength && currentPendingLength > 0) {
-      // Verificar si alguna orden existente cambió sus items o nota
+    } else if (pendingOrders.length === prevFilteredPending.length && pendingOrders.length > 0) {
+      // Verificar si alguna orden existente de esta zona cambió sus items o nota
       const isAnyUpdated = pendingOrders.some(order => {
-        const prev = prevOrdersRef.current.find(p => p.id === order.id);
-        const itemsChanged = prev && JSON.stringify(prev.items) !== JSON.stringify(order.items);
-        const noteChanged = prev && (prev as any).note !== (order as any).note;
+        const prev = prevFilteredPending.find(p => p.id === order.id);
+        if (!prev) return false;
+        const itemsChanged = JSON.stringify(prev.items) !== JSON.stringify(order.items);
+        const noteChanged = (prev as any).note !== (order as any).note;
         return itemsChanged || noteChanged;
       });
 
       if (isAnyUpdated) {
-        console.log("Detectada actualización en órdenes, reproduciendo sonido...");
         if (audioUpdateRef.current) {
           audioUpdateRef.current.currentTime = 0;
           audioUpdateRef.current.play().catch(console.error);
@@ -67,11 +96,10 @@ export default function KitchenPage() {
     }
 
     prevOrdersRef.current = orders;
-  }, [orders, audioEnabled, pendingOrders.length]);
+  }, [orders, audioEnabled, pendingOrders.length, zoneIdParam]);
 
   const enableAudio = () => {
     setAudioEnabled(true);
-    // Reproducir un silencio o el sonido de prueba para desbloquear el audio en el navegador
     audioUpdateRef.current?.play().then(() => {
       audioUpdateRef.current?.pause();
       if (audioUpdateRef.current) audioUpdateRef.current.currentTime = 0;
@@ -91,7 +119,10 @@ export default function KitchenPage() {
               <ChevronLeft size={24} />
             </Link>
             <div>
-              <h1 className="text-3xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 uppercase">Monitor de Cocina</h1>
+              <h1 className="text-3xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 uppercase flex items-center gap-3">
+                Monitor: {currentZone ? currentZone.name : 'Cocina General'}
+                <Layers className="text-brand-accent" size={24} />
+              </h1>
               <p className="text-brand-text/40 font-bold text-[10px] uppercase tracking-[0.2em]">{activeTab === 'pending' ? 'Ordenes activas en tiempo real' : 'Historial de despacho reciente'}</p>
             </div>
           </div>
@@ -169,7 +200,7 @@ export default function KitchenPage() {
             className="col-span-full py-32 flex flex-col items-center justify-center text-brand-text/20 border-2 border-dashed border-brand-border rounded-[40px] bg-brand-card/20"
           >
             <Utensils size={80} className="mb-6 opacity-10" />
-            <p className="text-2xl font-bold tracking-tight uppercase">Cocina despejada</p>
+            <p className="text-2xl font-bold tracking-tight uppercase">Zona despejada</p>
             <p className="text-xs font-black tracking-widest opacity-40 uppercase">Esperando nuevos pedidos...</p>
           </motion.div>
         )}
@@ -187,6 +218,18 @@ export default function KitchenPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function KitchenPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-brand-dark flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-brand-accent/20 border-t-brand-accent rounded-full animate-spin" />
+      </div>
+    }>
+      <KitchenContent />
+    </Suspense>
   );
 }
 

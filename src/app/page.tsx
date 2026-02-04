@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   ExternalLink,
   Users,
-  Globe
+  Globe,
+  Layers
 } from "lucide-react";
 import { useCurrency } from "@/context/CurrencyContext";
 import { useOrders } from "@/context/OrdersContext";
@@ -24,6 +25,8 @@ import ExchangeRateModal from "@/components/ExchangeRateModal";
 import DaySummaryModal from "@/components/DaySummaryModal";
 import OnboardingWizard from "@/components/OnboardingWizard";
 import PrinterSettingsModal from "@/components/PrinterSettingsModal";
+import ZonesModal from "@/components/ZonesModal";
+import MonitorSelectorModal from "@/components/MonitorSelectorModal";
 import Link from "next/link";
 import { db, User } from "@/lib/db";
 import { motion } from "framer-motion";
@@ -43,6 +46,8 @@ export default function Home() {
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isPrinterModalOpen, setIsPrinterModalOpen] = useState(false);
+  const [isZonesModalOpen, setIsZonesModalOpen] = useState(false);
+  const [isMonitorSelectorOpen, setIsMonitorSelectorOpen] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -211,13 +216,41 @@ export default function Home() {
           {(currentUser?.role === 'root' || currentUser?.role === 'admin') && (
             <DashboardLink href="/menu" icon={<Utensils size={28} />} label="Menú / Precios" accent="highlight" />
           )}
+
+          {(currentUser?.role === 'root' || currentUser?.role === 'admin') && (
+            <motion.button 
+              whileHover={{ y: -5, scale: 1.02 }}
+              onClick={() => setIsZonesModalOpen(true)}
+              className="glass-card p-8 flex flex-col items-center justify-center group relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-brand-accent/0 group-hover:bg-brand-accent/5 transition-colors" />
+              <div className="bg-brand-accent/10 text-brand-accent w-16 h-16 rounded-[2rem] flex items-center justify-center mb-5 group-hover:scale-110 transition-transform shadow-lg shadow-brand-accent/10">
+                <Layers size={28} />
+              </div>
+              <span className="font-black text-brand-text text-xs uppercase tracking-widest text-center">Zonas de Preparación</span>
+            </motion.button>
+          )}
           
           <div className="relative group">
-            <DashboardLink href="/kitchen" icon={<LayoutDashboard size={28} />} label="Monitor Cocina" accent="accent" />
+            <motion.button 
+              whileHover={{ y: -5, scale: 1.02 }}
+              onClick={() => setIsMonitorSelectorOpen(true)}
+              className="glass-card p-8 flex flex-col items-center justify-center h-full w-full group relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-brand-accent/0 group-hover:bg-brand-accent/5 transition-opacity" />
+              <div className="bg-brand-accent/10 text-brand-accent w-16 h-16 rounded-[2rem] flex items-center justify-center mb-5 group-hover:scale-110 transition-transform shadow-lg shadow-brand-accent/10">
+                <LayoutDashboard size={28} />
+              </div>
+              <span className="font-black text-brand-text text-xs uppercase tracking-widest text-center">Monitores</span>
+            </motion.button>
             <button 
               onClick={async (e) => {
                 e.preventDefault();
-                await (window as any).ipcRenderer.invoke('open-kitchen-window');
+                if ((window as any).ipcRenderer) {
+                  await (window as any).ipcRenderer.invoke('open-kitchen-window');
+                } else {
+                  window.open('/kitchen', '_blank');
+                }
               }}
               className="absolute top-4 right-4 p-2 glass-card !rounded-xl text-brand-text/40 hover:text-white opacity-0 group-hover:opacity-100 transition-all z-20"
             >
@@ -280,6 +313,8 @@ export default function Home() {
       />
       <OnboardingWizard isOpen={isWizardOpen} onClose={() => { setIsWizardOpen(false); loadDashboardData(); }} />
       <PrinterSettingsModal isOpen={isPrinterModalOpen} onClose={() => setIsPrinterModalOpen(false)} />
+      <ZonesModal isOpen={isZonesModalOpen} onClose={() => setIsZonesModalOpen(false)} />
+      <MonitorSelectorModal isOpen={isMonitorSelectorOpen} onClose={() => setIsMonitorSelectorOpen(false)} />
     </main>
   );
 }

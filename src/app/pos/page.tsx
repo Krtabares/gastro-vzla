@@ -266,47 +266,60 @@ function POSContent() {
     
     try {
       // 1. Determinar qué items enviar (Delta)
-      let itemsToCook = currentCart.map(item => ({
-        name: item.product.name,
-        quantity: item.quantity
-      }));
+      let itemsToCookWithZone: { name: string, quantity: number, zoneId?: string }[] = [];
+      let previousCart: {product: Product, quantity: number}[] = [];
 
       if (tableToUpdate.orderData) {
         try {
-          const previousCart = JSON.parse(tableToUpdate.orderData) as {product: Product, quantity: number}[];
-          
-          itemsToCook = currentCart.map(item => {
-            const prevItem = previousCart.find(p => p.product.id === item.product.id);
-            const prevQty = prevItem ? prevItem.quantity : 0;
-            const deltaQty = item.quantity - prevQty;
-            
-            return {
-              name: item.product.name,
-              quantity: deltaQty
-            };
-          }).filter(item => item.quantity > 0);
+          previousCart = JSON.parse(tableToUpdate.orderData);
         } catch (e) {
-          console.error("Error parsing previous orderData for delta:", e);
+          console.error("Error parsing previous orderData:", e);
         }
       }
+
+      itemsToCookWithZone = currentCart.map(item => {
+        const prevItem = previousCart.find(p => p.product.id === item.product.id);
+        const prevQty = prevItem ? prevItem.quantity : 0;
+        const deltaQty = item.quantity - prevQty;
+        
+        return {
+          name: item.product.name,
+          quantity: deltaQty,
+          zoneId: item.product.zoneId
+        };
+      }).filter(item => item.quantity > 0);
 
       // Si cambió la nota, actualizamos todas las órdenes activas en cocina para esta mesa
       if (noteChanged) {
         await updateOrderNote(tableToUpdate.number, currentNote);
       }
 
-      // Si hay algo nuevo que cocinar, se añade la orden
-      if (itemsToCook.length > 0) {
-        await addOrder(
-          tableToUpdate.number, 
-          itemsToCook, 
-          currentNote,
-          tableToUpdate.type || 'table'
-        );
+      // Si hay algo nuevo que cocinar, se añade la orden agrupada por zonas
+      if (itemsToCookWithZone.length > 0) {
+        const groupedByZone: Record<string, any[]> = {};
+        
+        itemsToCookWithZone.forEach(item => {
+          const zId = item.zoneId || 'default';
+          if (!groupedByZone[zId]) groupedByZone[zId] = [];
+          groupedByZone[zId].push({
+            name: item.name,
+            quantity: item.quantity
+          });
+        });
+
+        for (const zId in groupedByZone) {
+          await addOrder(
+            tableToUpdate.number, 
+            groupedByZone[zId], 
+            currentNote,
+            tableToUpdate.type || 'table',
+            zId === 'default' ? undefined : zId
+          );
+        }
       }
 
-      // Si no hay items nuevos ni cambió la nota, no hacemos nada (esto se controla con el disabled del botón pero por seguridad)
-      if (itemsToCook.length === 0 && !noteChanged) {
+      // Si no hay items nuevos ni cambió la nota, no hacemos nada
+      if (itemsToCookWithZone.length === 0 && !noteChanged) {
         setIsSendingToKitchen(false);
         return;
       }
@@ -367,10 +380,10 @@ function POSContent() {
     setOrderNote("");
 
     try {
-      // 2. Eliminar la orden de cocina (si existe)
-      const orderToDelete = (orders as any[]).find((o: any) => o.tableNumber === tableNum);
-      if (orderToDelete) {
-        await db.deleteOrder(orderToDelete.id);
+      // 2. Eliminar todas las órdenes de cocina para esta mesa
+      const tableOrders = (orders as any[]).filter((o: any) => o.tableNumber === tableNum);
+      for (const order of tableOrders) {
+        await db.deleteOrder(order.id);
       }
 
       // 3. Gestionar la mesa/orden externa en la DB
@@ -958,6 +971,14 @@ function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect:
       label: "bg-[#00FF9D]/20 text-[#00FF9D]",
       text: "LISTO",
       icon: <CheckCircle2 className="text-[#00FF9D] drop-shadow-[0_0_8px_rgba(0,255,157,0.5)]" size={20} />
+    },
+    partially_ready: {
+      accent: "text-orange-400",
+      border: "border-orange-400/60",
+      bg: "bg-orange-400/10",
+      label: "bg-orange-400/20 text-orange-400",
+      text: "PARCIAL",
+      icon: <CheckCircle2 className="text-orange-400" size={20} />
     }
   };
 

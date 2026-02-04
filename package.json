@@ -29,6 +29,13 @@
     "win": {
       "target": "nsis"
     },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office"
+    },
     "asar": true
   },
   "dependencies": {

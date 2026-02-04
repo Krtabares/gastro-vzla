@@ -81,6 +81,7 @@ export default function CashierMonitorPage() {
   // Helper to determine order state
   const getOrderState = (table: Table) => {
     const kitchenOrder = orders.find(o => o.tableNumber === table.number);
+    if (table.status === 'partially_ready') return { label: 'DESPACHO PARCIAL', color: 'text-orange-400 bg-orange-400/10', icon: <CheckCircle2 size={14} /> };
     if (kitchenOrder) return { label: 'EN COCINA', color: 'text-brand-accent bg-brand-accent/10', icon: <Utensils size={14} /> };
     if (table.status === 'ready') return { label: 'LISTO / DESPACHADO', color: 'text-[#00FF9D] bg-[#00FF9D]/10', icon: <CheckCircle2 size={14} /> };
     if (table.status === 'billing') return { label: 'PIDIÓ CUENTA', color: 'text-brand-highlight bg-brand-highlight/10', icon: <DollarSign size={14} /> };
