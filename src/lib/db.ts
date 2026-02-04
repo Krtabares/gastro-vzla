@@ -369,12 +369,20 @@ export const db = {
   async saveOrder(order: any): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').insert(order);
+      return;
+    }
+    if (isElectron) {
+      await window.ipcRenderer.invoke('db-save-order', order);
     }
   },
 
   async updateOrder(id: string, updates: any): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').update(updates).eq('id', id);
+      return;
+    }
+    if (isElectron) {
+      await window.ipcRenderer.invoke('db-update-order', { id, updates });
     }
   },
 
@@ -408,6 +416,10 @@ export const db = {
   async deleteOrder(id: string): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').delete().eq('id', id);
+      return;
+    }
+    if (isElectron) {
+      await window.ipcRenderer.invoke('db-delete-order', id);
     }
   },
 

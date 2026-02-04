@@ -38,7 +38,7 @@ function POSContent() {
   const tableIdParam = searchParams.get('tableId');
   
   const { formatUsd, formatVes, usdToVes, iva } = useCurrency();
-  const { orders, addOrder, completeSale } = useOrders();
+  const { orders, addOrder, completeSale, updateOrderNote } = useOrders();
   const [tables, setTables] = useState<Table[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
@@ -254,6 +254,7 @@ function POSContent() {
     const tableToUpdate = selectedTable;
     const currentCart = [...cart];
     const currentNote = orderNote;
+    const noteChanged = currentNote !== (tableToUpdate.orderNote || "");
     
     try {
       // 1. Determinar qué items enviar (Delta)
@@ -281,7 +282,12 @@ function POSContent() {
         }
       }
 
-      // Si no hay nada nuevo que cocinar, solo actualizamos la mesa (por si cambió la nota o el total)
+      // Si cambió la nota, actualizamos todas las órdenes activas en cocina para esta mesa
+      if (noteChanged) {
+        await updateOrderNote(tableToUpdate.number, currentNote);
+      }
+
+      // Si hay algo nuevo que cocinar, se añade la orden
       if (itemsToCook.length > 0) {
         await addOrder(
           tableToUpdate.number, 
@@ -289,6 +295,12 @@ function POSContent() {
           currentNote,
           tableToUpdate.type || 'table'
         );
+      }
+
+      // Si no hay items nuevos ni cambió la nota, no hacemos nada (esto se controla con el disabled del botón pero por seguridad)
+      if (itemsToCook.length === 0 && !noteChanged) {
+        setIsSendingToKitchen(false);
+        return;
       }
 
       const now = new Date();
@@ -621,12 +633,17 @@ function POSContent() {
                       <motion.button 
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        disabled={isSendingToKitchen || (selectedTable.status === 'ready' && cart.length > 0 && JSON.stringify(cart) === selectedTable.orderData)}
+                        disabled={isSendingToKitchen || (
+                          selectedTable.status === 'ready' && 
+                          cart.length > 0 && 
+                          JSON.stringify(cart) === selectedTable.orderData &&
+                          orderNote === (selectedTable.orderNote || "")
+                        )}
                         onClick={() => {
                           handleSendToKitchen();
                           setIsCartMobileOpen(false);
                         }}
-                        className={`w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm ${(isSendingToKitchen || (selectedTable.status === 'ready' && cart.length > 0 && JSON.stringify(cart) === selectedTable.orderData)) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm ${(isSendingToKitchen || (selectedTable.status === 'ready' && cart.length > 0 && JSON.stringify(cart) === selectedTable.orderData && orderNote === (selectedTable.orderNote || ""))) ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                       {isSendingToKitchen ? (
                         <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

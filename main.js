@@ -166,6 +166,7 @@ const db = {
   users: Datastore.create(path.join(dbDir, 'users.db')),
   license: Datastore.create(path.join(dbDir, 'license.db')),
   categories: Datastore.create(path.join(dbDir, 'categories.db')),
+  orders: Datastore.create(path.join(dbDir, 'orders.db')),
 };
 
 // Mapeo de códigos simples de licencia
@@ -285,6 +286,25 @@ function createKitchenWindow() {
 // Handlers IPC para NeDB
 ipcMain.handle('open-kitchen-window', async () => {
   createKitchenWindow();
+  return { success: true };
+});
+
+ipcMain.handle('db-get-orders', async () => {
+  return await db.orders.find({}).sort({ createdAt: 1 });
+});
+
+ipcMain.handle('db-save-order', async (event, order) => {
+  await db.orders.insert(order);
+  return { success: true };
+});
+
+ipcMain.handle('db-update-order', async (event, { id, updates }) => {
+  await db.orders.update({ id }, { $set: updates });
+  return { success: true };
+});
+
+ipcMain.handle('db-delete-order', async (event, id) => {
+  await db.orders.remove({ id });
   return { success: true };
 });
 

@@ -21,6 +21,7 @@ interface OrdersContextType {
   dailySalesUsd: number;
   addOrder: (tableNumber: string, items: OrderItem[], note?: string, type?: 'table' | 'takeaway' | 'delivery') => void;
   markAsReady: (orderId: string) => void;
+  updateOrderNote: (tableNumber: string, note: string) => Promise<void>;
   completeSale: (amountUsd: number) => void;
   resetDay: () => void;
 }
@@ -83,6 +84,15 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     await db.deleteOrder(orderId);
   };
 
+  const updateOrderNote = async (tableNumber: string, note: string) => {
+    // Buscar órdenes activas para esta mesa que no estén listas
+    const activeOrders = orders.filter(o => o.tableNumber === tableNumber && o.status !== 'ready');
+    for (const order of activeOrders) {
+      await db.updateOrder(order.id, { note });
+    }
+    await loadOrders();
+  };
+
   const completeSale = (amountUsd: number) => {
     setDailySalesUsd(prev => prev + amountUsd);
   };
@@ -93,7 +103,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <OrdersContext.Provider value={{ orders, dailySalesUsd, addOrder, markAsReady, completeSale, resetDay }}>
+    <OrdersContext.Provider value={{ orders, dailySalesUsd, addOrder, markAsReady, updateOrderNote, completeSale, resetDay }}>
       {children}
     </OrdersContext.Provider>
   );
