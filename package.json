@@ -1,6 +1,7 @@
 {
   "name": "restaurant-mgmt-venezuela",
   "version": "0.1.0",
+  "author": "Kerby Tabares <krtabares@gmail.com>",
   "private": true,
   "main": "main.js",
   "scripts": {
