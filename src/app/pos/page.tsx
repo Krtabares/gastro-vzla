@@ -26,7 +26,8 @@ import {
   ShoppingBag,
   Bike,
   Package,
-  ArrowRight
+  ArrowRight,
+  AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -48,6 +49,7 @@ export default function POSPage() {
   const [isSendingToKitchen, setIsSendingToKitchen] = useState(false);
   const [isExternalOrdersOpen, setIsExternalOrdersOpen] = useState(false);
   const [isTakeawayModalOpen, setIsTakeawayModalOpen] = useState(false);
+  const [isChargeWarningOpen, setIsChargeWarningOpen] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -109,7 +111,7 @@ export default function POSPage() {
   const handleTableSelect = (table: Table) => {
     console.log('Selecting table:', table);
     setSelectedTable(table);
-    if (table.status === 'occupied' && table.orderData) {
+    if (table.status !== 'available' && table.orderData) {
       try {
         const parsedCart = JSON.parse(table.orderData);
         setCart(Array.isArray(parsedCart) ? parsedCart : []);
@@ -229,33 +231,41 @@ export default function POSPage() {
     if (!selectedTable || cart.length === 0 || isSendingToKitchen) return;
 
     setIsSendingToKitchen(true);
-    // Guardamos referencia y limpiamos estado local inmediatamente para evitar rebote del Realtime
     const tableToUpdate = selectedTable;
     const currentCart = [...cart];
     const currentNote = orderNote;
     
     try {
-      // Verificar si ya existe una orden activa para esta mesa en el contexto global
-      const existingOrder = (orders as any[]).find((o: any) => o.tableNumber === tableToUpdate.number);
+      // 1. Determinar qué items enviar (Delta)
+      let itemsToCook = currentCart.map(item => ({
+        name: item.product.name,
+        quantity: item.quantity
+      }));
 
-      if (existingOrder) {
-        // Si existe, actualizamos la orden existente en lugar de crear una nueva
-        await db.updateOrder(existingOrder.id, {
-          items: currentCart.map(item => ({
-            name: item.product.name,
-            quantity: item.quantity
-          })),
-          note: currentNote,
-          createdAt: new Date().toISOString() // Actualizamos la hora para que cocina vea que es un cambio reciente
-        });
-      } else {
-        // Si no existe, creamos una nueva
+      if (tableToUpdate.orderData) {
+        try {
+          const previousCart = JSON.parse(tableToUpdate.orderData) as {product: Product, quantity: number}[];
+          
+          itemsToCook = currentCart.map(item => {
+            const prevItem = previousCart.find(p => p.product.id === item.product.id);
+            const prevQty = prevItem ? prevItem.quantity : 0;
+            const deltaQty = item.quantity - prevQty;
+            
+            return {
+              name: item.product.name,
+              quantity: deltaQty
+            };
+          }).filter(item => item.quantity > 0);
+        } catch (e) {
+          console.error("Error parsing previous orderData for delta:", e);
+        }
+      }
+
+      // Si no hay nada nuevo que cocinar, solo actualizamos la mesa (por si cambió la nota o el total)
+      if (itemsToCook.length > 0) {
         await addOrder(
           tableToUpdate.number, 
-          currentCart.map(item => ({
-            name: item.product.name,
-            quantity: item.quantity
-          })), 
+          itemsToCook, 
           currentNote,
           tableToUpdate.type || 'table'
         );
@@ -264,8 +274,8 @@ export default function POSPage() {
       const now = new Date();
       await db.saveTable({ 
         ...tableToUpdate, 
-        status: 'occupied',
-        currentOrderId: existingOrder ? existingOrder.id : Math.random().toString(36).substr(2, 9),
+        status: 'occupied', // Siempre vuelve a 'occupied' si se envía a cocina
+        currentOrderId: Math.random().toString(36).substr(2, 9),
         currentTotalUsd: totalUsd,
         startTime: tableToUpdate.startTime || now.toISOString(),
         orderData: JSON.stringify(currentCart),
@@ -275,12 +285,30 @@ export default function POSPage() {
       setSelectedTable(null);
       setCart([]);
       setOrderNote("");
-      // No hace falta llamar a loadData() aquí, el Realtime lo hará por nosotros
     } catch (error) {
       console.error("Error al enviar a cocina:", error);
       alert("Error al enviar a cocina. Intente nuevamente.");
     } finally {
       setIsSendingToKitchen(false);
+    }
+  };
+
+  const handleChargeClick = () => {
+    if (!selectedTable) return;
+    
+    // Si no hay productos en el carrito, no tiene sentido cobrar nada (o abrir el modal)
+    if (cart.length === 0) {
+      alert("La comanda está vacía.");
+      return;
+    }
+
+    // Verificar si el carrito actual es igual a lo que ya se envió a cocina
+    const hasUnsentChanges = JSON.stringify(cart) !== selectedTable.orderData;
+
+    if (hasUnsentChanges) {
+      setIsChargeWarningOpen(true);
+    } else {
+      setIsBillingOpen(true);
     }
   };
 
@@ -290,6 +318,7 @@ export default function POSPage() {
     const tableId = selectedTable.id;
     const tableNum = selectedTable.number;
     const finalTotal = totalUsd;
+    const isExternal = selectedTable.type === 'takeaway' || selectedTable.type === 'delivery';
     
     // 1. Limpiar estado visual inmediatamente
     setIsBillingOpen(false);
@@ -304,18 +333,23 @@ export default function POSPage() {
         await db.deleteOrder(orderToDelete.id);
       }
 
-      // 3. Limpiar la mesa en la DB forzando valores nulos
-      // Usamos el objeto completo para asegurar que no queden remanentes
-      await db.saveTable({ 
-        id: tableId,
-        number: tableNum,
-        status: 'available',
-        currentOrderId: null,
-        currentTotalUsd: 0,
-        startTime: null,
-        orderData: null,
-        orderNote: null
-      });
+      // 3. Gestionar la mesa/orden externa en la DB
+      if (isExternal) {
+        // Si es externa y ya se cobró, se elimina definitivamente
+        await db.deleteTable(tableId);
+      } else {
+        // Si es una mesa física, se libera
+        await db.saveTable({ 
+          id: tableId,
+          number: tableNum,
+          status: 'available',
+          currentOrderId: null,
+          currentTotalUsd: 0,
+          startTime: null,
+          orderData: null,
+          orderNote: null
+        });
+      }
 
       // 4. Registrar la venta
       completeSale(finalTotal);
@@ -557,23 +591,23 @@ export default function POSPage() {
                       <motion.button 
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={() => setIsBillingOpen(true)}
+                        onClick={handleChargeClick}
                         className="w-full bg-brand-highlight text-brand-dark py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-highlight/20 transition-all uppercase tracking-widest text-sm"
                       >
                         <DollarSign size={20} strokeWidth={3} /> Cobrar
                       </motion.button>
                     )}
 
-                    <motion.button 
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      disabled={isSendingToKitchen}
-                      onClick={() => {
-                        handleSendToKitchen();
-                        setIsCartMobileOpen(false);
-                      }}
-                      className={`w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm ${isSendingToKitchen ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
+                      <motion.button 
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        disabled={isSendingToKitchen || (selectedTable.status === 'ready' && cart.length > 0 && JSON.stringify(cart) === selectedTable.orderData)}
+                        onClick={() => {
+                          handleSendToKitchen();
+                          setIsCartMobileOpen(false);
+                        }}
+                        className={`w-full bg-brand-accent text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-brand-accent/20 transition-all uppercase tracking-widest text-sm ${(isSendingToKitchen || (selectedTable.status === 'ready' && cart.length > 0 && JSON.stringify(cart) === selectedTable.orderData)) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
                       {isSendingToKitchen ? (
                         <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       ) : (
@@ -612,6 +646,21 @@ export default function POSPage() {
           onConfirm={(val) => {
             setOrderNote(val);
             setIsNoteModalOpen(false);
+          }}
+        />
+
+        <ChargeWarningModal 
+          isOpen={isChargeWarningOpen}
+          onClose={() => setIsChargeWarningOpen(false)}
+          onConfirm={() => {
+            setIsChargeWarningOpen(false);
+            setIsBillingOpen(true);
+          }}
+          onSendToKitchen={async () => {
+            await handleSendToKitchen();
+            setIsChargeWarningOpen(false);
+            // Opcional: Podrías abrir el cobro automáticamente después de enviar a cocina, 
+            // pero el flujo actual de handleSendToKitchen cierra la mesa.
           }}
         />
       </main>
@@ -790,19 +839,36 @@ function ExternalOrderCard({ table, onSelect, idx }: { table: Table, onSelect: (
 function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect: (t: Table) => void, idx: number, onDelete: (id: string, e: React.MouseEvent) => void }) {
   const statusConfig = {
     available: {
-      accent: "brand-text/10",
+      accent: "text-brand-text/40",
+      border: "border-transparent",
+      bg: "bg-brand-text/5",
+      label: "bg-brand-text/10 text-brand-text/40",
       text: "Disponible",
       icon: <Plus className="text-brand-text/20" size={32} strokeWidth={3} />
     },
     occupied: {
-      accent: "brand-accent",
+      accent: "text-brand-accent",
+      border: "border-brand-accent/30",
+      bg: "bg-brand-accent/5",
+      label: "bg-brand-accent/10 text-brand-accent",
       text: "Ocupada",
       icon: <Clock className="text-brand-accent" size={20} />
     },
     billing: {
-      accent: "brand-highlight",
+      accent: "text-brand-highlight",
+      border: "border-brand-highlight/30",
+      bg: "bg-brand-highlight/5",
+      label: "bg-brand-highlight/10 text-brand-highlight",
       text: "Cuenta",
       icon: <DollarSign className="text-brand-highlight" size={20} />
+    },
+    ready: {
+      accent: "text-[#00FF9D]",
+      border: "border-[#00FF9D]/60",
+      bg: "bg-[#00FF9D]/10",
+      label: "bg-[#00FF9D]/20 text-[#00FF9D]",
+      text: "LISTO",
+      icon: <CheckCircle2 className="text-[#00FF9D] drop-shadow-[0_0_8px_rgba(0,255,157,0.5)]" size={20} />
     }
   };
 
@@ -811,13 +877,28 @@ function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect:
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: idx * 0.05 }}
+      animate={{ 
+        opacity: 1, 
+        y: 0,
+        boxShadow: table.status === 'ready' ? [
+          "0 0 20px rgba(0, 255, 157, 0.1)",
+          "0 0 40px rgba(0, 255, 157, 0.2)",
+          "0 0 20px rgba(0, 255, 157, 0.1)"
+        ] : "0px 0px 0px rgba(0, 0, 0, 0)"
+      }}
+      transition={{ 
+        delay: idx * 0.05,
+        boxShadow: {
+          duration: 2,
+          repeat: table.status === 'ready' ? Infinity : 0,
+          ease: "easeInOut"
+        }
+      }}
       whileHover={{ y: -5, scale: 1.02 }}
       onClick={() => onSelect(table)}
-      className={`glass-card p-6 flex flex-col h-[200px] group relative overflow-hidden cursor-pointer transition-all border-2 ${table.status !== 'available' ? `border-${config.accent}/30` : 'border-transparent'}`}
+      className={`glass-card p-6 flex flex-col h-[200px] group relative overflow-hidden cursor-pointer transition-all border-2 ${config.border} ${table.status === 'ready' ? 'shadow-[0_0_30px_rgba(0,255,157,0.15)]' : ''}`}
     >
-      <div className={`absolute top-0 right-0 w-24 h-24 bg-${config.accent}/5 rounded-full -mr-12 -mt-12 transition-all group-hover:bg-${config.accent}/10`} />
+      <div className={`absolute top-0 right-0 w-24 h-24 ${config.bg} rounded-full -mr-12 -mt-12 transition-all group-hover:opacity-80`} />
 
       {table.status === 'available' && (
         <button 
@@ -830,7 +911,7 @@ function TableCard({ table, onSelect, idx, onDelete }: { table: Table, onSelect:
 
       <div className="flex justify-between items-start mb-auto">
         <span className="text-3xl font-black text-white tracking-tighter">#{table.number}</span>
-        <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest bg-${config.accent}/10 text-${config.accent}`}>
+        <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${config.label}`}>
           {config.text}
         </span>
       </div>
@@ -966,6 +1047,55 @@ function NoteModal({ isOpen, onClose, value, onConfirm }: { isOpen: boolean, onC
             className="p-4 bg-brand-highlight hover:bg-brand-highlight/90 text-brand-dark rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-brand-highlight/20 transition-all"
           >
             Confirmar
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ChargeWarningModal({ isOpen, onClose, onConfirm, onSendToKitchen }: { isOpen: boolean, onClose: () => void, onConfirm: () => void, onSendToKitchen: () => void }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-brand-dark/80 backdrop-blur-md flex items-center justify-center z-[300] p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="glass-card p-10 w-full max-w-md shadow-2xl relative overflow-hidden border-red-500/20"
+      >
+        <div className="absolute top-0 left-0 w-full h-1 bg-red-500/50" />
+        
+        <div className="flex flex-col items-center text-center mb-8">
+          <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 border border-red-500/20 animate-pulse">
+            <AlertTriangle size={40} className="text-red-500" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Cambios Pendientes</h2>
+          <p className="text-brand-text/60 font-bold text-xs uppercase tracking-widest leading-relaxed">
+            Hay productos en la comanda que no han sido enviados a la cocina.
+          </p>
+        </div>
+        
+        <div className="space-y-3">
+          <button 
+            onClick={onSendToKitchen}
+            className="w-full p-4 bg-brand-accent hover:bg-brand-accent/90 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-brand-accent/20 transition-all flex items-center justify-center gap-3"
+          >
+            <Send size={18} /> Enviar a Cocina Primero
+          </button>
+          
+          <button 
+            onClick={onConfirm}
+            className="w-full p-4 bg-white/5 hover:bg-white/10 text-white font-black uppercase tracking-widest text-[10px] rounded-2xl transition-all border border-white/10"
+          >
+            Cobrar de todas formas
+          </button>
+
+          <button 
+            onClick={onClose}
+            className="w-full p-4 text-brand-text/40 hover:text-white font-black uppercase tracking-widest text-[10px] transition-all"
+          >
+            Regresar a la comanda
           </button>
         </div>
       </motion.div>

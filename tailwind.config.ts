@@ -14,6 +14,7 @@ const config: Config = {
           card: "#161618",
           accent: "#7C3AED",
           highlight: "#06B6D4",
+          ready: "#10B981",
           border: "#27272A",
           text: "#EDEDED",
         },

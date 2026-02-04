@@ -13,7 +13,7 @@ export interface Product {
 export interface Table {
   id: string;
   number: string;
-  status: 'available' | 'occupied' | 'billing';
+  status: 'available' | 'occupied' | 'billing' | 'ready';
   type?: 'table' | 'takeaway' | 'delivery';
   currentOrderId?: string | null;
   currentTotalUsd?: number | null;
@@ -39,12 +39,20 @@ export interface Order {
   createdAt: string;
 }
 
+export interface Payment {
+  method: 'cash_usd' | 'cash_ves' | 'zelle' | 'pago_movil' | 'card';
+  amountUsd: number;
+  igtfUsd?: number;
+  amountVes?: number;
+}
+
 export interface Sale {
   id: string;
   timestamp: string;
   items: OrderItem[];
   totalUsd: number;
   paymentMethod?: 'cash_usd' | 'cash_ves' | 'zelle' | 'pago_movil' | 'card';
+  payments?: Payment[];
 }
 
 export interface User {
@@ -94,12 +102,30 @@ const getCloudConfig = () => {
 const getStorageMode = () => {
   if (typeof window === 'undefined') return 'local';
   const mode = localStorage.getItem('gastro_storage_mode');
-  if (!mode) return 'cloud'; // Por defecto cloud si es la primera vez
+  if (!mode) return 'cloud'; 
   return mode;
+};
+
+const getLocalServerUrl = () => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('gastro_local_server_url') || '';
 };
 
 const cloudConfig = getCloudConfig();
 export const supabase = cloudConfig ? createClient(cloudConfig.url, cloudConfig.key) : null;
+
+// Helper to handle API calls to central server
+const apiCall = async (path: string, method: string = 'GET', body?: any) => {
+  const baseUrl = getLocalServerUrl();
+  if (!baseUrl) throw new Error('Servidor central no configurado');
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!response.ok) throw new Error(`Error en API: ${response.statusText}`);
+  return await response.json();
+};
 
 export const db = {
   async getSettings(): Promise<Database['settings']> {
@@ -108,6 +134,9 @@ export const db = {
       if (data) {
         return data.reduce((acc, row) => ({ ...acc, [row.key]: parseFloat(row.value) }), { exchangeRate: 36.5, iva: 0.16, igtf: 0.03 });
       }
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/settings');
     }
     if (isElectron) return await window.ipcRenderer.invoke('db-get-settings');
     const local = localStorage.getItem('gastro_settings');
@@ -131,6 +160,9 @@ export const db = {
     if (getStorageMode() === 'cloud' && supabase) {
       const { data } = await supabase.from('products').select('*');
       return data || [];
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/products');
     }
     if (isElectron) return await window.ipcRenderer.invoke('db-get-products');
     const local = localStorage.getItem('gastro_products');
@@ -158,6 +190,9 @@ export const db = {
       const { data } = await supabase.from('tables').select('*');
       return data || [];
     }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/tables');
+    }
     if (isElectron) return await window.ipcRenderer.invoke('db-get-tables');
     const local = localStorage.getItem('gastro_tables');
     return local ? JSON.parse(local) : [];
@@ -166,6 +201,10 @@ export const db = {
   async saveTable(table: Table): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('tables').upsert(table);
+      return;
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      await apiCall('/api/tables', 'POST', table);
       return;
     }
     if (isElectron) {
@@ -207,7 +246,7 @@ export const db = {
 
   async getSalesByMethod(startDate?: string, endDate?: string): Promise<any> {
     if (getStorageMode() === 'cloud' && supabase) {
-      let query = supabase.from('sales').select('*');
+      let query = supabase.from('sales').select('*').eq('status', 'open');
       if (startDate && endDate) {
         query = query.gte('timestamp', startDate).lte('timestamp', endDate);
       }
@@ -237,28 +276,44 @@ export const db = {
     }
   },
 
-  async getSales(startDate?: string, endDate?: string): Promise<Sale[]> {
+  async getSales(startDate?: string, endDate?: string, includeClosed: boolean = false): Promise<Sale[]> {
     if (getStorageMode() === 'cloud' && supabase) {
       let query = supabase.from('sales').select('*');
+      if (!includeClosed) {
+        query = query.eq('status', 'open');
+      }
       if (startDate && endDate) {
         query = query.gte('timestamp', startDate).lte('timestamp', endDate);
       }
       const { data } = await query.order('timestamp', { ascending: false });
       return data || [];
     }
-    if (isElectron) return await window.ipcRenderer.invoke('db-get-sales', { startDate, endDate });
+    if (isElectron) return await window.ipcRenderer.invoke('db-get-sales', { startDate, endDate, includeClosed });
     const local = localStorage.getItem('gastro_sales');
     const sales: Sale[] = local ? JSON.parse(local) : [];
-    if (startDate && endDate) {
-      return sales.filter(s => s.timestamp >= startDate && s.timestamp <= endDate);
+    
+    let filtered = sales;
+    if (!includeClosed) {
+      filtered = sales.filter(s => (s as any).status !== 'closed');
     }
-    return sales;
+    
+    if (startDate && endDate) {
+      return filtered.filter(s => s.timestamp >= startDate && s.timestamp <= endDate);
+    }
+    return filtered;
   },
 
   async login(username: string, password: string): Promise<User | null> {
     if (getStorageMode() === 'cloud' && supabase) {
-      const { data } = await supabase.from('users').select('*').eq('username', username).eq('password', password).single();
+      const { data } = await supabase.from('users').select('*').eq('username', username).eq('password', password).maybeSingle();
       return data || null;
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      try {
+        return await apiCall('/api/login', 'POST', { username, password });
+      } catch (e) {
+        return null;
+      }
     }
     if (isElectron) return await window.ipcRenderer.invoke('db-login', { username, password });
     return null;
@@ -294,6 +349,9 @@ export const db = {
       const { data } = await supabase.from('categories').select('*');
       return data || [];
     }
+    if (getStorageMode() === 'local' && !isElectron) {
+      return await apiCall('/api/categories');
+    }
     if (isElectron) return await window.ipcRenderer.invoke('db-get-categories');
     const local = localStorage.getItem('gastro_categories');
     return local ? JSON.parse(local) : [];
@@ -317,6 +375,33 @@ export const db = {
   async updateOrder(id: string, updates: any): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
       await supabase.from('orders').update(updates).eq('id', id);
+    }
+  },
+
+  async updateTableStatus(tableNumber: string, status: Table['status']): Promise<void> {
+    if (getStorageMode() === 'cloud' && supabase) {
+      // Buscamos por número de mesa de forma flexible
+      const { data: tables } = await supabase.from('tables').select('id, number');
+      const table = tables?.find(t => 
+        t.number.trim() === tableNumber.trim() || 
+        parseInt(t.number) === parseInt(tableNumber)
+      );
+      
+      if (table) {
+        await supabase.from('tables').update({ status }).eq('id', table.id);
+      }
+      return;
+    }
+    
+    // Fallback local
+    const tables = await this.getTables();
+    const index = tables.findIndex(t => 
+      t.number.trim() === tableNumber.trim() || 
+      parseInt(t.number) === parseInt(tableNumber)
+    );
+    if (index > -1) {
+      tables[index].status = status;
+      localStorage.setItem('gastro_tables', JSON.stringify(tables));
     }
   },
 
@@ -357,7 +442,7 @@ export const db = {
 
   async getLicenseStatus(): Promise<{ status: 'active' | 'expired' | 'none'; daysLeft: number; expiryDate?: string }> {
     if (getStorageMode() === 'cloud' && supabase) {
-      const { data } = await supabase.from('license').select('*').single();
+      const { data } = await supabase.from('license').select('*').maybeSingle();
       if (!data) return { status: 'none', daysLeft: 0 };
       if (data.expiryDate === 'lifetime') return { status: 'active', daysLeft: 9999, expiryDate: 'lifetime' };
       const expiry = new Date(data.expiryDate);
@@ -404,7 +489,8 @@ export const db = {
         await supabase.from('products').delete().neq('id', '0');
         await supabase.from('tables').delete().neq('id', '0');
       } else {
-        await supabase.from('sales').delete().neq('id', '0');
+        // En lugar de borrar, cerramos la sesión de las ventas abiertas
+        await supabase.from('sales').update({ status: 'closed' }).eq('status', 'open');
         await supabase.from('tables').update({ status: 'available', currentOrderId: null, currentTotalUsd: 0, startTime: null, orderData: null }).neq('id', '0');
       }
       return { success: true };
@@ -415,7 +501,7 @@ export const db = {
 
   async updateProductStock(id: string, quantity: number): Promise<void> {
     if (getStorageMode() === 'cloud' && supabase) {
-      const { data } = await supabase.from('products').select('stock').eq('id', id).single();
+      const { data } = await supabase.from('products').select('stock').eq('id', id).maybeSingle();
       if (data && data.stock !== -1) {
         const newStock = Math.max(0, data.stock - quantity);
         await supabase.from('products').update({ stock: newStock, available: newStock > 0 }).eq('id', id);
@@ -458,6 +544,10 @@ export const db = {
       for (const item of sale.items) {
         await this.updateProductStock(item.id, item.quantity);
       }
+      return;
+    }
+    if (getStorageMode() === 'local' && !isElectron) {
+      await apiCall('/api/sales', 'POST', sale);
       return;
     }
     if (isElectron) {

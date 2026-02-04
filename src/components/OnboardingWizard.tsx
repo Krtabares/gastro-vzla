@@ -25,6 +25,8 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
   const [step, setStep] = useState(1);
   const { exchangeRate, setExchangeRate, iva, setIva, igtf, setIgtf } = useCurrency();
   
+  const isElectron = typeof window !== 'undefined' && (window as any).ipcRenderer;
+
   const [tempRate, setTempRate] = useState(exchangeRate);
   const [tempIva, setTempIva] = useState(iva * 100);
   const [tempIgtf, setTempIgtf] = useState(igtf * 100);
@@ -32,7 +34,7 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseKey, setSupabaseKey] = useState('');
 
-  if (!isOpen) return null;
+  if (!isOpen || !isElectron) return null;
 
   const totalSteps = 5;
 

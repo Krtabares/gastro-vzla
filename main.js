@@ -6,33 +6,151 @@ const escpos = require('escpos');
 escpos.USB = require('escpos-usb');
 const Datastore = require('nedb-promises');
 const express = require('express');
+const os = require('os');
+const cors = require('cors');
+const bodyParser = require('body-parser');
 
 // Configuración del servidor para móviles
 const expressApp = express();
-const SERVER_PORT = 3001; // Usamos 3001 para no chocar con Next.js dev (3000)
+const SERVER_PORT = 3001;
+
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+const LOCAL_IP = getLocalIp();
 
 function startLocalServer() {
   const outPath = isDev 
     ? path.join(__dirname, 'out') 
     : path.join(process.resourcesPath, 'app', 'out');
 
-  // Si no existe la carpeta out y no es dev, avisar
   if (!fs.existsSync(outPath) && !isDev) {
     console.error('La carpeta "out" no existe. Asegúrate de correr npm run build primero.');
-    return;
   }
 
+  expressApp.use(cors());
+  expressApp.use(bodyParser.json());
   expressApp.use(express.static(outPath));
-  
-  // Manejar rutas de Next.js (SPA)
+
+  // --- API Routes for Mobile Clients ---
+
+  // Settings
+  expressApp.get('/api/settings', async (req, res) => {
+    const rows = await db.settings.find({});
+    const settings = rows.reduce((acc, row) => ({ ...acc, [row.key]: parseFloat(row.value) }), {});
+    res.json(settings);
+  });
+
+  // Products
+  expressApp.get('/api/products', async (req, res) => {
+    const products = await db.products.find({});
+    res.json(products);
+  });
+
+  // Orders for Kitchen Monitor
+  expressApp.get('/api/orders', async (req, res) => {
+    const orders = await db.tables.find({ status: { $in: ['occupied', 'billing', 'ready'] } });
+    res.json(orders);
+  });
+
+  // Tables
+  expressApp.get('/api/tables', async (req, res) => {
+    const tables = await db.tables.find({});
+    res.json(tables);
+  });
+
+  expressApp.post('/api/tables', async (req, res) => {
+    const table = req.body;
+    await db.tables.update({ id: table.id }, table, { upsert: true });
+    res.json({ success: true });
+  });
+
+  // Categories
+  expressApp.get('/api/categories', async (req, res) => {
+    const categories = await db.categories.find({});
+    res.json(categories);
+  });
+
+  // Print Order to Kitchen (Mock for now or map to actual print)
+  expressApp.post('/api/print-kitchen', async (req, res) => {
+    const { tableId, items } = req.body;
+    console.log(`Imprimiendo pedido de mesa ${tableId} a cocina...`);
+    // Aquí se podría llamar a una función de impresión similar a ipcMain.handle('print-invoice')
+    res.json({ success: true });
+  });
+
+  // Create Sale
+  expressApp.post('/api/sales', async (req, res) => {
+    try {
+      const sale = req.body;
+      const license = await db.license.findOne({});
+      let isAllowed = false;
+      
+      if (license) {
+        if (license.expiryDate === 'lifetime') {
+          isAllowed = true;
+        } else {
+          const expiry = new Date(license.expiryDate);
+          if (expiry > new Date()) isAllowed = true;
+        }
+      }
+
+      if (!isAllowed) {
+        return res.status(403).json({ error: 'Licencia vencida o no encontrada.' });
+      }
+
+      await db.sales.insert({
+        ...sale,
+        timestamp: new Date().toISOString()
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Login
+  expressApp.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    const user = await db.users.findOne({ username, password });
+    if (user) {
+      res.json(user);
+    } else {
+      res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+  });
+
+  // Manejar rutas de Next.js (SPA) - Debe estar al final
   expressApp.get(/.*/, (req, res) => {
-    res.sendFile(path.join(outPath, 'index.html'));
+    if (fs.existsSync(path.join(outPath, 'index.html'))) {
+      res.sendFile(path.join(outPath, 'index.html'));
+    } else {
+      res.status(404).send('Not Found');
+    }
   });
 
   expressApp.listen(SERVER_PORT, '0.0.0.0', () => {
-    console.log(`Servidor para móviles disponible en: http://0.0.0.0:${SERVER_PORT}`);
+    console.log(`Servidor central activo en: http://${LOCAL_IP}:${SERVER_PORT}`);
   });
 }
+
+// Exponer IP y Puerto al Frontend de Electron via IPC
+ipcMain.handle('get-server-info', () => {
+  return {
+    ip: LOCAL_IP,
+    port: SERVER_PORT,
+    url: `http://${LOCAL_IP}:${SERVER_PORT}`
+  };
+});
 
 // Ruta para las bases de datos NeDB
 const dbDir = path.join(app.getPath('userData'), 'database');
@@ -233,126 +351,25 @@ ipcMain.handle('db-save-sale', async (event, sale) => {
   return { success: true };
 });
 
-ipcMain.handle('db-get-sales', async (event, { startDate, endDate }) => {
+ipcMain.handle('db-get-sales', async (event, { startDate, endDate, includeClosed }) => {
   let query = {};
+  if (!includeClosed) {
+    query.status = { $ne: 'closed' };
+  }
   if (startDate && endDate) {
     query.timestamp = { $gte: startDate, $lte: endDate };
   }
   return await db.sales.find(query).sort({ timestamp: -1 });
 });
 
-// Handlers para Impresión (Mantenidos)
-ipcMain.handle('list-printers', async () => {
-  try {
-    const devices = escpos.USB.findPrinter();
-    return devices.map(d => ({
-      vendorId: d.deviceDescriptor.idVendor,
-      productId: d.deviceDescriptor.idProduct,
-      name: `Printer ${d.deviceDescriptor.idVendor}:${d.deviceDescriptor.idProduct}`
-    }));
-  } catch (err) {
-    return [];
-  }
-});
-
-ipcMain.handle('print-test', async (event, printerConfig) => {
-  try {
-    let device;
-    if (printerConfig && printerConfig.vendorId && printerConfig.productId) {
-      device = new escpos.USB(printerConfig.vendorId, printerConfig.productId);
-    } else {
-      const devices = escpos.USB.findPrinter();
-      if (devices.length === 0) return { success: false, error: 'No se encontró impresora USB' };
-      device = new escpos.USB();
-    }
-    const printer = new escpos.Printer(device);
-
-    device.open((error) => {
-      if (error) throw error;
-      printer
-        .font('a')
-        .align('ct')
-        .style('bu')
-        .size(1, 1)
-        .text('GastroVnzla - TEST')
-        .text('--------------------------------')
-        .text('Prueba de impresion exitosa')
-        .cut()
-        .close();
-    });
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('print-invoice', async (event, data) => {
-  const { items, total, subtotal, taxes, client } = data;
-  try {
-    const devices = escpos.USB.findPrinter();
-    if (devices.length === 0) throw new Error('Impresora no conectada');
-
-    const device = new escpos.USB();
-    const printer = new escpos.Printer(device);
-
-    device.open((error) => {
-      if (error) throw error;
-      printer
-        .align('ct')
-        .text('GASTRO VENEZUELA')
-        .text('RIF: J-12345678-9')
-        .text('Direccion: Caracas, Venezuela')
-        .text('--------------------------------')
-        .align('lt')
-        .text(`Cliente: ${client.name}`)
-        .text(`RIF/CI: ${client.id}`)
-        .text('--------------------------------');
-
-      items.forEach(item => {
-        printer.text(`${item.qty} x ${item.name.substring(0, 20)}... ${item.price.toFixed(2)}`);
-      });
-
-      printer
-        .text('--------------------------------')
-        .align('rt')
-        .text(`Subtotal: ${subtotal.toFixed(2)}`)
-        .text(`IVA (16%): ${taxes.iva.toFixed(2)}`)
-        .text(`IGTF (3%): ${taxes.igtf.toFixed(2)}`)
-        .style('b')
-        .text(`TOTAL: ${total.toFixed(2)}`)
-        .style('n')
-        .align('ct')
-        .text('Gracias por su compra!')
-        .cut()
-        .close();
-    });
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle('db-update-product-stock', async (event, { id, quantity }) => {
-  const product = await db.products.findOne({ id });
-  if (product && product.stock !== -1) {
-    const newStock = Math.max(0, product.stock - quantity);
-    await db.products.update({ id }, { $set: { stock: newStock, available: newStock > 0 ? 1 : 0 } });
-  }
-  return { success: true };
-});
-
-ipcMain.handle('db-delete-sale', async (event, id) => {
-  await db.sales.remove({ _id: id });
-  return { success: true };
-});
-
 ipcMain.handle('db-get-sales-by-method', async (event, { startDate, endDate }) => {
-  let query = {};
+  let query = { status: { $ne: 'closed' } };
   if (startDate && endDate) {
     query.timestamp = { $gte: startDate, $lte: endDate };
   }
   
   const sales = await db.sales.find(query);
+
   const summary = {
     cash_usd: 0,
     cash_ves: 0,
@@ -469,8 +486,8 @@ ipcMain.handle('db-reset', async (event, { mode }) => {
       await db.users.remove({}, { multi: true });
       await db.categories.remove({}, { multi: true });
     } else {
-      // Reinicio parcial (Solo ventas y limpiar mesas)
-      await db.sales.remove({}, { multi: true });
+      // Reinicio parcial (Cerrar sesión de ventas y limpiar mesas)
+      await db.sales.update({ status: { $ne: 'closed' } }, { $set: { status: 'closed' } }, { multi: true });
       await db.tables.update({}, { $set: { status: 'available', currentOrderId: null, currentTotalUsd: 0, startTime: null, orderData: null } }, { multi: true });
     }
     

@@ -76,6 +76,10 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   };
 
   const markAsReady = async (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      await db.updateTableStatus(order.tableNumber, 'ready');
+    }
     await db.deleteOrder(orderId);
   };
 

@@ -14,7 +14,8 @@ import {
   History,
   ShieldCheck,
   ExternalLink,
-  Users
+  Users,
+  Globe
 } from "lucide-react";
 import { useCurrency } from "@/context/CurrencyContext";
 import { useOrders } from "@/context/OrdersContext";
@@ -36,6 +37,7 @@ export default function Home() {
   const [activeTablesCount, setActiveTablesCount] = useState(0);
   const [showValues, setShowValues] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [serverInfo, setServerInfo] = useState<{ url: string } | null>(null);
   
   const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
@@ -47,10 +49,18 @@ export default function Home() {
     const userJson = localStorage.getItem('gastro_user');
     if (userJson) setCurrentUser(JSON.parse(userJson));
     
+    // El wizard solo debe abrirse en Electron
+    const isElectron = typeof window !== 'undefined' && (window as any).ipcRenderer;
     const hasOnboarded = localStorage.getItem('hasOnboarded');
-    if (!hasOnboarded) {
+    
+    if (isElectron && !hasOnboarded) {
       setIsWizardOpen(true);
       localStorage.setItem('hasOnboarded', 'true');
+    }
+
+    // Obtener info del servidor si estamos en Electron
+    if ((window as any).ipcRenderer?.getServerInfo) {
+      (window as any).ipcRenderer.getServerInfo().then(setServerInfo);
     }
   }, []);
 
@@ -79,6 +89,20 @@ export default function Home() {
   };
 
   const maskValue = (val: string) => showValues ? val : "*****";
+
+  const handleResetDatabase = async () => {
+    try {
+      const result = await db.resetDatabase('partial');
+      if (result.success) {
+        await loadDashboardData();
+      } else {
+        alert("Error al resetear la base de datos: " + result.error);
+      }
+    } catch (error) {
+      console.error("Error resetting database:", error);
+      alert("Error crítico al resetear la base de datos");
+    }
+  };
 
   return (
     <main className="min-h-screen p-4 md:p-8 relative overflow-hidden bg-brand-dark">
@@ -229,15 +253,29 @@ export default function Home() {
         )}
       </div>
 
-      <footer className="mt-16 flex flex-col sm:flex-row justify-center items-center gap-6 relative z-10 opacity-40 hover:opacity-100 transition-opacity">
-        <p className="text-[10px] font-black text-brand-text/50 uppercase tracking-[0.4em]">
+      <footer className="mt-16 flex flex-col sm:flex-row justify-between items-center gap-6 relative z-10">
+        {serverInfo && (
+          <div className="flex items-center gap-3 bg-brand-accent/10 border border-brand-accent/20 px-4 py-2 rounded-xl">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-brand-accent uppercase tracking-widest">Servidor Central Activo</span>
+              <span className="text-[10px] font-mono text-white/60">{serverInfo.url}</span>
+            </div>
+          </div>
+        )}
+        <p className="text-[10px] font-black text-brand-text/50 uppercase tracking-[0.4em] opacity-40 hover:opacity-100 transition-opacity">
           Powered by <span className="text-brand-accent">Kenat PowerHouse</span>
         </p>
       </footer>
 
       {/* Modals remain the same but will inherit the new styles from glass-card */}
       <ExchangeRateModal isOpen={isRateModalOpen} onClose={() => { setIsRateModalOpen(false); loadDashboardData(); }} />
-      <DaySummaryModal isOpen={isSummaryModalOpen} onClose={() => setIsSummaryModalOpen(false)} totalUsd={dailySalesUsd} onConfirm={() => loadDashboardData()} />
+      <DaySummaryModal 
+        isOpen={isSummaryModalOpen} 
+        onClose={() => setIsSummaryModalOpen(false)} 
+        totalUsd={dailySalesUsd} 
+        onConfirm={handleResetDatabase} 
+      />
       <OnboardingWizard isOpen={isWizardOpen} onClose={() => { setIsWizardOpen(false); loadDashboardData(); }} />
       <PrinterSettingsModal isOpen={isPrinterModalOpen} onClose={() => setIsPrinterModalOpen(false)} />
     </main>

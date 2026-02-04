@@ -13,7 +13,10 @@ import {
   Clock,
   X,
   Trash2,
-  Filter
+  Filter,
+  CreditCard,
+  Smartphone,
+  Banknote
 } from 'lucide-react';
 import Link from 'next/link';
 import { db, Sale } from '@/lib/db';
@@ -32,11 +35,12 @@ import {
 } from 'recharts';
 
 export default function SalesHistoryPage() {
-  const { formatUsd, formatVes, exchangeRate } = useCurrency();
+  const { formatUsd, formatVes, exchangeRate, iva } = useCurrency();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<'open' | 'all'>('open');
   const [dateRange, setDateRange] = useState({
     start: new Date(new Date().setHours(0,0,0,0)).toISOString(),
     end: new Date(new Date().setHours(23,59,59,999)).toISOString()
@@ -44,11 +48,15 @@ export default function SalesHistoryPage() {
 
   useEffect(() => {
     loadSales();
-  }, [dateRange]);
+  }, [dateRange, statusFilter]);
 
   const loadSales = async () => {
     setLoading(true);
-    const data = await db.getSales(dateRange.start, dateRange.end);
+    const data = await db.getSales(
+      statusFilter === 'all' ? dateRange.start : undefined, 
+      statusFilter === 'all' ? dateRange.end : undefined, 
+      statusFilter === 'all'
+    );
     setSales(data);
     setLoading(false);
   };
@@ -62,22 +70,94 @@ export default function SalesHistoryPage() {
   };
 
   const exportToExcel = () => {
-    const data = sales.map(s => ({
-      ID: s.id,
-      Fecha: new Date(s.timestamp).toLocaleString(),
-      Total_USD: s.totalUsd.toFixed(2),
-      Metodo_Pago: s.paymentMethod,
-      Items: s.items.map(i => `${i.quantity}x ${i.name}`).join(', ')
-    }));
+    const data = sales.map(s => {
+      const dateObj = new Date(s.timestamp);
+      
+      // Calcular impuestos basados en los pagos si existen
+      const totalIgtf = s.payments?.reduce((acc, p) => acc + (p.igtfUsd || 0), 0) || 0;
+      const subtotalConIva = s.totalUsd - totalIgtf;
+      const subtotalBase = subtotalConIva / (1 + iva);
+      const montoIva = subtotalConIva - subtotalBase;
 
+      // Desglose de pagos
+      const p_efectivo_usd = s.payments?.filter(p => p.method === 'cash_usd').reduce((acc, p) => acc + p.amountUsd + (p.igtfUsd || 0), 0) || (s.paymentMethod === 'cash_usd' ? s.totalUsd : 0);
+      const p_zelle = s.payments?.filter(p => p.method === 'zelle').reduce((acc, p) => acc + p.amountUsd + (p.igtfUsd || 0), 0) || (s.paymentMethod === 'zelle' ? s.totalUsd : 0);
+      const p_pago_movil = s.payments?.filter(p => p.method === 'pago_movil').reduce((acc, p) => acc + (p.amountUsd || 0), 0) || (s.paymentMethod === 'pago_movil' ? s.totalUsd : 0);
+      const p_punto = s.payments?.filter(p => p.method === 'card').reduce((acc, p) => acc + (p.amountUsd || 0), 0) || (s.paymentMethod === 'card' ? s.totalUsd : 0);
+      const p_efectivo_ves = s.payments?.filter(p => p.method === 'cash_ves').reduce((acc, p) => acc + (p.amountUsd || 0), 0) || (s.paymentMethod === 'cash_ves' ? s.totalUsd : 0);
+
+      return {
+        'ID VENTA': s.id.slice(0, 8).toUpperCase(),
+        'FECHA': dateObj.toLocaleDateString(),
+        'HORA': dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        'ITEMS': s.items.length,
+        'DETALLE': s.items.map(i => `${i.quantity}x ${i.name}`).join(' | '),
+        'SUBTOTAL USD': Number(subtotalBase.toFixed(2)),
+        'IVA (16%) USD': Number(montoIva.toFixed(2)),
+        'IGTF (3%) USD': Number(totalIgtf.toFixed(2)),
+        'TOTAL USD': Number(s.totalUsd.toFixed(2)),
+        'TASA BCV': exchangeRate,
+        'TOTAL BS': Number((s.totalUsd * exchangeRate).toFixed(2)),
+        'PAGO EFEC USD': Number(p_efectivo_usd.toFixed(2)),
+        'PAGO ZELLE': Number(p_zelle.toFixed(2)),
+        'PAGO P. MOVIL': Number(p_pago_movil.toFixed(2)),
+        'PAGO PUNTO': Number(p_punto.toFixed(2)),
+        'PAGO EFEC VES': Number(p_efectivo_ves.toFixed(2))
+      };
+    });
+
+    // Crear hoja de trabajo
     const worksheet = XLSX.utils.json_to_sheet(data);
+    
+    // Configurar anchos de columna
+    const wscols = [
+      { wch: 12 }, // ID
+      { wch: 12 }, // FECHA
+      { wch: 10 }, // HORA
+      { wch: 8 },  // ITEMS
+      { wch: 40 }, // DETALLE
+      { wch: 15 }, // SUBTOTAL
+      { wch: 15 }, // IVA
+      { wch: 15 }, // IGTF
+      { wch: 15 }, // TOTAL USD
+      { wch: 12 }, // TASA
+      { wch: 20 }, // TOTAL BS
+      { wch: 15 }, // EFEC USD
+      { wch: 15 }, // ZELLE
+      { wch: 15 }, // PAGO MOVIL
+      { wch: 15 }, // PUNTO
+      { wch: 15 }  // EFEC VES
+    ];
+    worksheet['!cols'] = wscols;
+
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Ventas");
-    XLSX.writeFile(workbook, `Reporte_Ventas_${dateRange.start.split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Historial de Ventas");
+
+    // Generar archivo
+    XLSX.writeFile(workbook, `Reporte_GastroPos_${dateRange.start.split('T')[0]}.xlsx`);
   };
 
   const filteredSales = sales.filter(s => s.id.toLowerCase().includes(searchTerm.toLowerCase()));
   const totalPeriodUsd = sales.reduce((acc, s) => acc + s.totalUsd, 0);
+
+  const paymentBreakdown = sales.reduce((acc: any, sale) => {
+    if (sale.payments) {
+      sale.payments.forEach(p => {
+        if (!acc[p.method]) acc[p.method] = { count: 0, usd: 0, ves: 0 };
+        acc[p.method].count += 1;
+        acc[p.method].usd += p.amountUsd + (p.igtfUsd || 0);
+        acc[p.method].ves += p.amountVes || 0;
+      });
+    } else {
+      // Fallback para ventas antiguas sin array de pagos
+      const method = (sale as any).paymentMethod || 'cash_usd';
+      if (!acc[method]) acc[method] = { count: 0, usd: 0, ves: 0 };
+      acc[method].count += 1;
+      acc[method].usd += sale.totalUsd;
+      acc[method].ves += sale.totalUsd * exchangeRate;
+    }
+    return acc;
+  }, {});
 
   const chartData = sales.reduce((acc: any[], sale) => {
     const hour = new Date(sale.timestamp).getHours() + ":00";
@@ -98,8 +178,8 @@ export default function SalesHistoryPage() {
       <header className="bg-brand-card/20 backdrop-blur-xl border-b border-brand-border/30 px-8 py-6 flex flex-col md:flex-row items-center justify-between sticky top-0 z-40 gap-6">
         <div className="flex items-center gap-6">
           <motion.div whileHover={{ scale: 1.1, x: -5 }}>
-            <Link href="/" className="glass-card p-3 text-brand-text/40 hover:text-white transition-all">
-              <ArrowLeft size={24} />
+            <Link href="/" className="w-12 h-12 rounded-2xl bg-brand-dark/50 border border-brand-border/50 flex items-center justify-center text-brand-text/40 hover:text-white hover:border-brand-accent transition-all shadow-2xl">
+              <ArrowLeft size={20} strokeWidth={3} />
             </Link>
           </motion.div>
           <div>
@@ -113,28 +193,46 @@ export default function SalesHistoryPage() {
         <div className="flex flex-wrap items-center gap-4">
           <div className="glass-card !p-1 flex rounded-2xl">
             <button 
-              onClick={() => setDateRange({
-                start: new Date(new Date().setHours(0,0,0,0)).toISOString(),
-                end: new Date(new Date().setHours(23,59,59,999)).toISOString()
-              })}
-              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${new Date(dateRange.start).getDate() === new Date().getDate() ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/20' : 'text-brand-text/40 hover:text-brand-text'}`}
+              onClick={() => setStatusFilter('open')}
+              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${statusFilter === 'open' ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/20' : 'text-brand-text/40 hover:text-brand-text'}`}
             >
-              Hoy
+              Abiertas
             </button>
             <button 
-              onClick={() => {
-                const start = new Date();
-                start.setDate(start.getDate() - 7);
-                setDateRange({
-                  start: start.toISOString(),
-                  end: new Date().toISOString()
-                });
-              }}
-              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${new Date(dateRange.start).getDate() !== new Date().getDate() ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/20' : 'text-brand-text/40 hover:text-brand-text'}`}
+              onClick={() => setStatusFilter('all')}
+              className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${statusFilter === 'all' ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/20' : 'text-brand-text/40 hover:text-brand-text'}`}
             >
-              7 Días
+              Histórico
             </button>
           </div>
+
+          {statusFilter === 'all' && (
+            <div className="glass-card !p-1 flex rounded-2xl">
+              <button 
+                onClick={() => setDateRange({
+                  start: new Date(new Date().setHours(0,0,0,0)).toISOString(),
+                  end: new Date(new Date().setHours(23,59,59,999)).toISOString()
+                })}
+                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${new Date(dateRange.start).getDate() === new Date().getDate() ? 'bg-brand-highlight text-brand-dark shadow-lg shadow-brand-highlight/20' : 'text-brand-text/40 hover:text-brand-text'}`}
+              >
+                Hoy
+              </button>
+              <button 
+                onClick={() => {
+                  const start = new Date();
+                  start.setDate(start.getDate() - 7);
+                  setDateRange({
+                    start: start.toISOString(),
+                    end: new Date().toISOString()
+                  });
+                }}
+                className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${new Date(dateRange.start).getDate() !== new Date().getDate() ? 'bg-brand-highlight text-brand-dark shadow-lg shadow-brand-highlight/20' : 'text-brand-text/40 hover:text-brand-text'}`}
+              >
+                7 Días
+              </button>
+            </div>
+          )}
+          
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -230,6 +328,7 @@ export default function SalesHistoryPage() {
           </div>
 
           {/* Listado lateral */}
+          {/* Listado lateral - AHORA CON BUSQUEDA Y VENTAS */}
           <div className="glass-card flex flex-col h-[450px]">
             <div className="p-6 border-b border-brand-border/30">
               <div className="relative">
@@ -253,7 +352,7 @@ export default function SalesHistoryPage() {
                     transition={{ delay: idx * 0.05 }}
                     key={sale.id}
                     onClick={() => setSelectedSale(sale)}
-                    className="p-4 glass-card border-brand-border/20 hover:border-brand-accent/30 cursor-pointer transition-all flex justify-between items-center group bg-brand-dark/20"
+                    className={`p-4 glass-card border-brand-border/20 hover:border-brand-accent/30 cursor-pointer transition-all flex justify-between items-center group ${sale.status === 'closed' ? 'bg-brand-dark/10 opacity-60' : 'bg-brand-dark/20'}`}
                   >
                     <div>
                       <div className="flex items-center gap-2 mb-1">
@@ -261,6 +360,9 @@ export default function SalesHistoryPage() {
                         <span className="text-[10px] font-black text-white">
                           {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
+                        {sale.status === 'closed' && (
+                          <span className="bg-brand-text/10 text-brand-text/40 px-2 py-0.5 rounded text-[8px] font-black uppercase">Cerrada</span>
+                        )}
                       </div>
                       <p className="text-[9px] font-bold text-brand-text/20 uppercase">#{sale.id.slice(0, 8)}</p>
                     </div>
@@ -281,6 +383,32 @@ export default function SalesHistoryPage() {
             </div>
           </div>
         </div>
+
+        {/* Métodos de Pago (Ahora abajo en cuadrícula) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <PaymentStatCard 
+            label="Efectivo USD"
+            method="cash_usd"
+            stats={paymentBreakdown.cash_usd}
+            icon={<DollarSign className="text-yellow-500" size={20} />}
+            gradient="from-yellow-500/10 via-transparent to-transparent"
+          />
+          <PaymentStatCard 
+            label="Zelle"
+            method="zelle"
+            stats={paymentBreakdown.zelle}
+            icon={<CreditCard className="text-purple-500" size={20} />}
+            gradient="from-purple-500/10 via-transparent to-transparent"
+          />
+          <PaymentStatCard 
+            label="Pago Móvil"
+            method="pago_movil"
+            stats={paymentBreakdown.pago_movil}
+            icon={<Smartphone className="text-cyan-500" size={20} />}
+            gradient="from-cyan-500/10 via-transparent to-transparent"
+            showVes
+          />
+        </div>
       </main>
 
       {/* Modal Detalle Venta */}
@@ -291,12 +419,12 @@ export default function SalesHistoryPage() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-card w-full max-w-lg shadow-2xl overflow-hidden border-brand-accent/20"
+              className="glass-card w-full max-w-lg max-h-[90vh] shadow-2xl overflow-hidden border-brand-accent/20 flex flex-col"
             >
-              <div className="bg-brand-accent p-10 text-white relative">
+              <div className="bg-brand-accent p-6 md:p-10 text-white relative shrink-0">
                 <button 
                   onClick={() => setSelectedSale(null)}
-                  className="absolute right-6 top-6 p-2 glass-card border-white/20 hover:bg-white/10 transition-colors"
+                  className="absolute right-6 top-6 p-2 glass-card border-white/20 hover:bg-white/10 transition-colors z-10"
                 >
                   <X size={20} />
                 </button>
@@ -304,43 +432,45 @@ export default function SalesHistoryPage() {
                 <p className="text-white/40 text-[10px] font-black uppercase tracking-[0.4em] mt-2">Ticket Detallado</p>
               </div>
 
-              <div className="p-10 space-y-8">
+              <div className="p-6 md:p-10 space-y-6 overflow-y-auto custom-scrollbar flex-1">
                 <div className="space-y-4">
                   <h3 className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.3em] flex items-center gap-3">
                     <span className="w-6 h-[1px] bg-brand-border" /> Items Comandados
                   </h3>
-                  <div className="space-y-3 max-h-[250px] overflow-y-auto custom-scrollbar pr-2">
+                  <div className="space-y-3">
                     {selectedSale.items.map((item, idx) => (
                       <div key={idx} className="flex justify-between items-center bg-brand-dark/40 border border-brand-border/20 p-4 rounded-2xl">
                         <div className="flex items-center gap-4">
-                          <div className="bg-brand-accent/10 w-10 h-10 rounded-xl flex items-center justify-center font-black text-brand-accent border border-brand-accent/20">
+                          <div className="bg-brand-accent/10 w-10 h-10 rounded-xl flex items-center justify-center font-black text-brand-accent border border-brand-accent/20 shrink-0">
                             {item.quantity}
                           </div>
-                          <span className="font-black text-white text-sm">{item.name}</span>
+                          <span className="font-black text-white text-sm line-clamp-1">{item.name}</span>
                         </div>
-                        <span className="font-black text-white">{formatUsd(item.price * item.quantity)}</span>
+                        <span className="font-black text-white shrink-0 ml-2">{formatUsd(item.price * item.quantity)}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="border-t border-brand-border/30 pt-8 space-y-4">
+                <div className="border-t border-brand-border/30 pt-6 space-y-4">
                   <div className="flex justify-between items-end">
                     <span className="text-[10px] font-black text-brand-text/40 uppercase tracking-widest">Total en Divisas</span>
                     <span className="text-4xl font-black text-white tracking-tighter">{formatUsd(selectedSale.totalUsd)}</span>
                   </div>
-                  <div className="flex justify-between items-center bg-brand-highlight/10 border border-brand-highlight/20 p-5 rounded-2xl">
+                  <div className="flex justify-between items-center bg-brand-highlight/5 border border-brand-highlight/20 p-5 rounded-2xl">
                     <span className="text-xs font-black text-brand-highlight uppercase tracking-widest">Bolívares Totales</span>
                     <span className="text-2xl font-black text-brand-highlight tracking-tighter">{formatVes(selectedSale.totalUsd * exchangeRate)}</span>
                   </div>
                 </div>
+              </div>
 
+              <div className="p-6 md:p-10 pt-0 shrink-0">
                 <div className="flex gap-4">
                   <motion.button 
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => deleteSale(selectedSale.id)}
-                    className="p-5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-red-500 hover:text-white transition-all flex-1"
+                    className="p-4 bg-red-500/10 text-red-400 border border-red-500/20 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 hover:bg-red-500 hover:text-white transition-all flex-1"
                   >
                     <Trash2 size={18} /> Anular
                   </motion.button>
@@ -348,7 +478,7 @@ export default function SalesHistoryPage() {
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setSelectedSale(null)}
-                    className="flex-[2] bg-brand-accent text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.4em] transition-all shadow-xl shadow-brand-accent/20"
+                    className="flex-[2] bg-brand-accent text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.4em] transition-all shadow-xl shadow-brand-accent/20"
                   >
                     Regresar
                   </motion.button>
@@ -382,5 +512,32 @@ function StatBox({ label, value, subValue, icon, accent }: { label: string, valu
         <p className={`text-[10px] font-bold uppercase tracking-tight ${accentColor} opacity-60 truncate`}>{subValue}</p>
       </div>
     </motion.div>
+  );
+}
+
+function PaymentStatCard({ label, stats, icon, gradient, showVes }: any) {
+  const { formatUsd, formatVes } = useCurrency();
+  const usdVal = stats?.usd || 0;
+  const vesVal = stats?.ves || 0;
+  const count = stats?.count || 0;
+
+  return (
+    <div className={`p-4 rounded-2xl border border-brand-border/20 bg-gradient-to-br ${gradient} flex items-center justify-between group hover:border-brand-accent/40 transition-all`}>
+      <div className="flex items-center gap-4">
+        <div className="w-10 h-10 rounded-xl bg-brand-dark/50 flex items-center justify-center border border-brand-border/30 group-hover:scale-110 transition-transform">
+          {icon}
+        </div>
+        <div>
+          <h4 className="text-sm font-black text-white">{label}</h4>
+          <p className="text-[9px] font-bold text-brand-text/30 uppercase tracking-widest">{count} ENTRADAS</p>
+        </div>
+      </div>
+      <div className="text-right">
+        <p className="text-lg font-black text-white tracking-tighter leading-none">{formatUsd(usdVal)}</p>
+        {showVes && (
+          <p className="text-[10px] font-bold text-brand-highlight tracking-tight mt-1">{formatVes(vesVal)}</p>
+        )}
+      </div>
+    </div>
   );
 }
