@@ -505,6 +505,7 @@ ipcMain.handle('db-reset', async (event, { mode }) => {
       await db.sales.remove({}, { multi: true });
       await db.users.remove({}, { multi: true });
       await db.categories.remove({}, { multi: true });
+      await db.orders.remove({}, { multi: true });
     } else {
       // Reinicio parcial (Cerrar sesión de ventas y limpiar mesas)
       await db.sales.update({ status: { $ne: 'closed' } }, { $set: { status: 'closed' } }, { multi: true });

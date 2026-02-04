@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useCurrency } from "@/context/CurrencyContext";
 import { db, Product, Category } from "@/lib/db";
 import { 
@@ -22,6 +23,7 @@ import ProductModal from "@/components/ProductModal";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function MenuPage() {
+  const router = useRouter();
   const { formatUsd, formatVes, usdToVes } = useCurrency();
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -110,11 +112,14 @@ export default function MenuPage() {
       <div className="max-w-7xl mx-auto relative z-10">
         <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-12">
           <div className="flex items-center gap-5">
-            <motion.div whileHover={{ scale: 1.1, x: -5 }}>
-              <Link href="/" className="glass-card p-3 text-brand-text/40 hover:text-white transition-all">
-                <ChevronLeft size={24} />
-              </Link>
-            </motion.div>
+            <motion.button 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => router.back()}
+              className="glass-card p-3 text-brand-text hover:text-brand-highlight transition-all flex items-center justify-center"
+            >
+              <ChevronLeft size={24} />
+            </motion.button>
             <div>
               <h1 className="text-4xl font-black text-white tracking-tight uppercase">Menú & Precios</h1>
               <p className="text-brand-text/40 font-bold uppercase tracking-[0.4em] text-[10px]">Catálogo de Productos</p>

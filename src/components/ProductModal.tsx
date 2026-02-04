@@ -21,8 +21,6 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
   const [hasStock, setHasStock] = useState(false);
   const [customCategories, setCustomCategories] = useState<Category[]>([]);
 
-  const defaultCategories = ["Entradas", "Pizzas", "Hamburguesas", "Bebidas", "Postres"];
-
   useEffect(() => {
     if (isOpen) {
       loadCategories();
@@ -52,7 +50,7 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
     } else if (cats.length > 0) {
       setCategory(cats[0].name);
     } else {
-      setCategory(defaultCategories[0]);
+      setCategory('');
     }
   };
 
@@ -131,9 +129,9 @@ export default function ProductModal({ isOpen, onClose, onSave, editingProduct }
                       onChange={(e) => setCategory(e.target.value)}
                       className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-5 text-xs font-black uppercase tracking-widest text-white outline-none focus:border-brand-highlight appearance-none transition-all"
                     >
-                      {defaultCategories.map(cat => (
-                        <option key={cat} value={cat} className="bg-brand-card">{cat}</option>
-                      ))}
+                      {customCategories.length === 0 && (
+                        <option value="" className="bg-brand-card">Sin categorías</option>
+                      )}
                       {customCategories.map(cat => (
                         <option key={cat.id} value={cat.name} className="bg-brand-card">{cat.name}</option>
                       ))}

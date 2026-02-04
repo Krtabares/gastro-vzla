@@ -37,6 +37,7 @@ export interface Order {
   status: 'pending' | 'cooking' | 'ready';
   note?: string;
   createdAt: string;
+  dispatchedAt?: string;
 }
 
 export interface Payment {
@@ -497,9 +498,13 @@ export const db = {
   async resetDatabase(mode: 'full' | 'partial'): Promise<{ success: boolean; error?: string }> {
     if (getStorageMode() === 'cloud' && supabase) {
       if (mode === 'full') {
-        await supabase.from('sales').delete().neq('id', '0');
-        await supabase.from('products').delete().neq('id', '0');
-        await supabase.from('tables').delete().neq('id', '0');
+        await supabase.from('sales').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('products').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('tables').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('categories').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('users').delete().neq('role', 'root');
+        await supabase.from('settings').delete().neq('key', '_none_');
       } else {
         // En lugar de borrar, cerramos la sesión de las ventas abiertas
         await supabase.from('sales').update({ status: 'closed' }).eq('status', 'open');

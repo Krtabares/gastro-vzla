@@ -14,6 +14,9 @@ export interface Order {
   items: OrderItem[];
   status: 'pending' | 'cooking' | 'ready';
   createdAt: Date;
+  dispatchedAt?: Date;
+  type?: 'table' | 'takeaway' | 'delivery';
+  note?: string;
 }
 
 interface OrdersContextType {
@@ -21,6 +24,7 @@ interface OrdersContextType {
   dailySalesUsd: number;
   addOrder: (tableNumber: string, items: OrderItem[], note?: string, type?: 'table' | 'takeaway' | 'delivery') => void;
   markAsReady: (orderId: string) => void;
+  revertToKitchen: (orderId: string) => void;
   updateOrderNote: (tableNumber: string, note: string) => Promise<void>;
   completeSale: (amountUsd: number) => void;
   resetDay: () => void;
@@ -59,7 +63,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     const data = await db.getOrders();
     setOrders(data.map((o: any) => ({
       ...o,
-      createdAt: new Date(o.createdAt)
+      createdAt: new Date(o.createdAt),
+      dispatchedAt: o.dispatchedAt ? new Date(o.dispatchedAt) : undefined
     })));
   };
 
@@ -80,8 +85,24 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     const order = orders.find(o => o.id === orderId);
     if (order) {
       await db.updateTableStatus(order.tableNumber, 'ready');
+      await db.updateOrder(orderId, { 
+        status: 'ready',
+        dispatchedAt: new Date().toISOString()
+      });
     }
-    await db.deleteOrder(orderId);
+  };
+
+  const revertToKitchen = async (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      // Si es una mesa física, volvemos a ponerla en 'occupied'
+      // Si es externa, usualmente ya está en 'occupied' o 'ready'
+      await db.updateTableStatus(order.tableNumber, 'occupied');
+      await db.updateOrder(orderId, { 
+        status: 'pending',
+        dispatchedAt: null
+      });
+    }
   };
 
   const updateOrderNote = async (tableNumber: string, note: string) => {
@@ -103,7 +124,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <OrdersContext.Provider value={{ orders, dailySalesUsd, addOrder, markAsReady, updateOrderNote, completeSale, resetDay }}>
+    <OrdersContext.Provider value={{ orders, dailySalesUsd, addOrder, markAsReady, revertToKitchen, updateOrderNote, completeSale, resetDay }}>
       {children}
     </OrdersContext.Provider>
   );
