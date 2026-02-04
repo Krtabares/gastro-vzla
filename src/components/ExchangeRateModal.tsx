@@ -7,17 +7,30 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { User } from '@/lib/db';
 
 export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
-  const { exchangeRate, setExchangeRate, iva, setIva, igtf, setIgtf, suggestedRate } = useCurrency();
+  const { 
+    exchangeRate, setExchangeRate, 
+    iva, setIva, 
+    igtf, setIgtf, 
+    ivaEnabled, setIvaEnabled,
+    igtfEnabled, setIgtfEnabled,
+    suggestedRate 
+  } = useCurrency();
   const [tempRate, setTempRate] = useState(exchangeRate);
   const [tempIva, setTempIva] = useState(iva * 100);
   const [tempIgtf, setTempIgtf] = useState(igtf * 100);
+  const [tempIvaEnabled, setTempIvaEnabled] = useState(ivaEnabled);
+  const [tempIgtfEnabled, setTempIgtfEnabled] = useState(igtfEnabled);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
     setTempRate(exchangeRate);
+    setTempIva(iva * 100);
+    setTempIgtf(igtf * 100);
+    setTempIvaEnabled(ivaEnabled);
+    setTempIgtfEnabled(igtfEnabled);
     const userJson = localStorage.getItem('gastro_user');
     if (userJson) setCurrentUser(JSON.parse(userJson));
-  }, [exchangeRate, isOpen]);
+  }, [exchangeRate, iva, igtf, ivaEnabled, igtfEnabled, isOpen]);
 
   if (!isOpen) return null;
 
@@ -28,6 +41,8 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
     setExchangeRate(tempRate);
     setIva(tempIva / 100);
     setIgtf(tempIgtf / 100);
+    setIvaEnabled(tempIvaEnabled);
+    setIgtfEnabled(tempIgtfEnabled);
     onClose();
   };
 
@@ -85,27 +100,43 @@ export default function ExchangeRateModal({ isOpen, onClose }: { isOpen: boolean
 
           <div className="grid grid-cols-2 gap-6">
             <div className="space-y-3">
-              <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                <Percent size={14} className="text-brand-accent" /> IVA (%)
-              </label>
+              <div className="flex justify-between items-center px-1">
+                <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <Percent size={14} className="text-brand-accent" /> IVA (%)
+                </label>
+                <button 
+                  onClick={() => isAdmin && setTempIvaEnabled(!tempIvaEnabled)}
+                  className={`w-8 h-4 rounded-full transition-colors relative ${tempIvaEnabled ? 'bg-brand-accent' : 'bg-brand-border/30'}`}
+                >
+                  <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${tempIvaEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+              </div>
               <input 
                 type="number" 
-                disabled={!isAdmin}
+                disabled={!isAdmin || !tempIvaEnabled}
                 value={tempIva}
                 onChange={(e) => setTempIva(parseFloat(e.target.value) || 0)}
-                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none transition-all ${(!isAdmin || !tempIvaEnabled) ? 'opacity-30 cursor-not-allowed' : ''}`}
               />
             </div>
             <div className="space-y-3">
-              <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2 px-1">
-                <Percent size={14} className="text-brand-accent" /> IGTF (%)
-              </label>
+              <div className="flex justify-between items-center px-1">
+                <label className="text-[10px] font-black text-brand-text/40 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <Percent size={14} className="text-brand-accent" /> IGTF (%)
+                </label>
+                <button 
+                  onClick={() => isAdmin && setTempIgtfEnabled(!tempIgtfEnabled)}
+                  className={`w-8 h-4 rounded-full transition-colors relative ${tempIgtfEnabled ? 'bg-brand-accent' : 'bg-brand-border/30'}`}
+                >
+                  <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${tempIgtfEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+              </div>
               <input 
                 type="number" 
-                disabled={!isAdmin}
+                disabled={!isAdmin || !tempIgtfEnabled}
                 value={tempIgtf}
                 onChange={(e) => setTempIgtf(parseFloat(e.target.value) || 0)}
-                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`w-full bg-brand-dark/50 border border-brand-border/50 rounded-2xl py-4 px-6 text-xl font-black text-white focus:border-brand-accent outline-none transition-all ${(!isAdmin || !tempIgtfEnabled) ? 'opacity-30 cursor-not-allowed' : ''}`}
               />
             </div>
           </div>

@@ -10,6 +10,7 @@ import {
   Users, 
   Clock, 
   Plus, 
+  Search, 
   Utensils,
   DollarSign,
   TrendingUp,
@@ -37,7 +38,7 @@ function POSContent() {
   const searchParams = useSearchParams();
   const tableIdParam = searchParams.get('tableId');
   
-  const { formatUsd, formatVes, usdToVes, iva } = useCurrency();
+  const { formatUsd, formatVes, usdToVes, iva, ivaEnabled } = useCurrency();
   const { orders, addOrder, completeSale, updateOrderNote } = useOrders();
   const [tables, setTables] = useState<Table[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -54,6 +55,7 @@ function POSContent() {
   const [isExternalOrdersOpen, setIsExternalOrdersOpen] = useState(false);
   const [isTakeawayModalOpen, setIsTakeawayModalOpen] = useState(false);
   const [isChargeWarningOpen, setIsChargeWarningOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
     loadInitialData();
@@ -131,6 +133,7 @@ function POSContent() {
   const handleTableSelect = (table: Table) => {
     console.log('Selecting table:', table);
     setSelectedTable(table);
+    setSearchTerm("");
     if (table.status !== 'available' && table.orderData) {
       try {
         const parsedCart = JSON.parse(table.orderData);
@@ -244,8 +247,13 @@ function POSContent() {
   };
 
   const subtotalUsd = cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0);
-  const ivaUsd = subtotalUsd * iva;
+  const ivaUsd = ivaEnabled ? subtotalUsd * iva : 0;
   const totalUsd = subtotalUsd + ivaUsd;
+
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.category.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const handleSendToKitchen = async () => {
     if (!selectedTable || cart.length === 0 || isSendingToKitchen) return;
@@ -406,7 +414,10 @@ function POSContent() {
             <div className="flex items-center gap-4">
               <motion.button 
                 whileHover={{ scale: 1.1, x: -5 }}
-                onClick={() => setSelectedTable(null)}
+                onClick={() => {
+                  setSelectedTable(null);
+                  setSearchTerm("");
+                }}
                 className="p-3 glass-card text-brand-text/60 hover:text-white transition-all"
               >
                 <ChevronLeft size={24} />
@@ -443,9 +454,30 @@ function POSContent() {
             </motion.button>
           </header>
 
+          <div className="mb-8 relative z-20">
+            <div className="relative max-w-md">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text/20" size={18} />
+              <input 
+                type="text" 
+                placeholder="BUSCAR PRODUCTO O CATEGORÍA..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-brand-dark/50 border border-brand-border/50 rounded-xl pl-12 pr-4 py-4 text-[10px] font-black uppercase tracking-widest text-white outline-none focus:border-brand-accent transition-all"
+              />
+              {searchTerm && (
+                <button 
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-text/20 hover:text-white transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-20 md:pb-0">
             <AnimatePresence>
-              {products.map((product, idx) => {
+              {filteredProducts.map((product, idx) => {
                 const isOutOfStock = product.stock !== undefined && product.stock === 0;
                 const isLowStock = product.stock !== undefined && product.stock !== -1 && product.minStock !== undefined && product.stock <= product.minStock;
 
@@ -483,6 +515,12 @@ function POSContent() {
                 );
               })}
             </AnimatePresence>
+            {filteredProducts.length === 0 && (
+              <div className="col-span-full py-20 text-center text-brand-text/20">
+                <Search size={64} strokeWidth={1} className="mx-auto mb-4 opacity-10" />
+                <p className="text-[10px] font-black uppercase tracking-[0.5em]">No se encontraron productos</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -601,10 +639,12 @@ function POSContent() {
                       <span>Subtotal</span>
                       <span>{formatUsd(subtotalUsd)}</span>
                     </div>
-                    <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
-                      <span>IVA (16%)</span>
-                      <span>{formatUsd(ivaUsd)}</span>
-                    </div>
+                    {ivaEnabled && (
+                      <div className="flex justify-between text-brand-text/40 text-[10px] font-black uppercase tracking-widest">
+                        <span>IVA ({iva * 100}%)</span>
+                        <span>{formatUsd(ivaUsd)}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-4 border-t border-brand-border/30">

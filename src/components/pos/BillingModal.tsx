@@ -17,7 +17,7 @@ interface BillingModalProps {
 }
 
 export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd, items, onComplete, type }: BillingModalProps) {
-  const { formatUsd, formatVes, usdToVes, vesToUsd, iva, igtf } = useCurrency();
+  const { formatUsd, formatVes, usdToVes, vesToUsd, iva, igtf, ivaEnabled, igtfEnabled } = useCurrency();
   const [paymentMethod, setPaymentMethod] = useState<'cash_usd' | 'cash_ves' | 'zelle' | 'pago_movil' | 'card'>('cash_usd');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [amountInput, setAmountInput] = useState<string>('');
@@ -31,7 +31,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
     setAmountInput(val);
     const num = parseFloat(val);
     if (!isNaN(num)) {
-      const igtfAmount = (paymentMethod === 'cash_usd' || paymentMethod === 'zelle') ? num * igtf : 0;
+      const igtfAmount = (igtfEnabled && (paymentMethod === 'cash_usd' || paymentMethod === 'zelle')) ? num * igtf : 0;
       setVesAmountInput(usdToVes(num + igtfAmount).toFixed(2));
     } else {
       setVesAmountInput('');
@@ -43,7 +43,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
     const num = parseFloat(val);
     if (!isNaN(num)) {
       const usdWithIgtf = vesToUsd(num);
-      const isIgtfMethod = paymentMethod === 'cash_usd' || paymentMethod === 'zelle';
+      const isIgtfMethod = igtfEnabled && (paymentMethod === 'cash_usd' || paymentMethod === 'zelle');
       const baseUsd = isIgtfMethod ? usdWithIgtf / (1 + igtf) : usdWithIgtf;
       setAmountInput(baseUsd.toFixed(2));
     } else {
@@ -53,7 +53,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
 
   useEffect(() => {
     handleUsdChange(amountInput);
-  }, [paymentMethod]);
+  }, [paymentMethod, igtfEnabled]);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('gastro_user');
@@ -66,7 +66,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
     }
   }, [isOpen]);
 
-  const ivaAmount = subtotalUsd * iva;
+  const ivaAmount = ivaEnabled ? subtotalUsd * iva : 0;
   const baseTotalUsd = subtotalUsd + ivaAmount;
 
   const currentTotalWithIgtf = payments.reduce((acc, p) => acc + p.amountUsd + (p.igtfUsd || 0), 0);
@@ -89,7 +89,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
   
   if (!isOpen) return null;
 
-  const needsIgtf = paymentMethod === 'cash_usd' || paymentMethod === 'zelle';
+  const needsIgtf = igtfEnabled && (paymentMethod === 'cash_usd' || paymentMethod === 'zelle');
   
   const handleAddPayment = () => {
     const amount = parseFloat(amountInput);
@@ -159,13 +159,15 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
               <span>Subtotal</span>
               <span className="text-white font-bold">{formatUsd(subtotalUsd)}</span>
             </div>
-            <div className="flex justify-between text-brand-text/60 text-sm">
-              <span>IVA (16%)</span>
-              <span className="text-white font-bold">{formatUsd(ivaAmount)}</span>
-            </div>
+            {ivaEnabled && (
+              <div className="flex justify-between text-brand-text/60 text-sm">
+                <span>IVA ({iva * 100}%)</span>
+                <span className="text-white font-bold">{formatUsd(ivaAmount)}</span>
+              </div>
+            )}
             {totalIgtfPaid > 0 && (
               <div className="flex justify-between text-brand-highlight text-sm font-bold animate-in fade-in slide-in-from-left-2">
-                <span>IGTF (3%)</span>
+                <span>IGTF ({igtf * 100}%)</span>
                 <span>{formatUsd(totalIgtfPaid)}</span>
               </div>
             )}
@@ -249,7 +251,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
                 onClick={() => setPaymentMethod('cash_usd')}
                 icon={<DollarSign size={20} />}
                 label="Efectivo USD"
-                desc="Aplica IGTF 3%"
+                desc={igtfEnabled ? `Aplica IGTF ${igtf * 100}%` : "Sin IGTF"}
               />
               <PaymentOption 
                 id="zelle"
@@ -257,7 +259,7 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
                 onClick={() => setPaymentMethod('zelle')}
                 icon={<Smartphone size={20} />}
                 label="Zelle"
-                desc="Aplica IGTF 3%"
+                desc={igtfEnabled ? `Aplica IGTF ${igtf * 100}%` : "Sin IGTF"}
               />
               <PaymentOption 
                 id="pago_movil"
@@ -327,12 +329,12 @@ export default function BillingModal({ isOpen, onClose, tableNumber, subtotalUsd
                     </div>
                  </div>
                  
-                 {needsIgtf && (
-                  <div className="flex justify-between items-center text-[10px] font-black text-brand-highlight uppercase italic">
-                    <span>+ IGTF (3%)</span>
-                    <span>{formatUsd(parseFloat(amountInput || '0') * igtf)}</span>
-                  </div>
-                )}
+                  {needsIgtf && (
+                   <div className="flex justify-between items-center text-[10px] font-black text-brand-highlight uppercase italic">
+                     <span>+ IGTF ({igtf * 100}%)</span>
+                     <span>{formatUsd(parseFloat(amountInput || '0') * igtf)}</span>
+                   </div>
+                 )}
 
                 <button 
                   onClick={handleAddPayment}

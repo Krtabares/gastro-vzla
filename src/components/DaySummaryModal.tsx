@@ -50,7 +50,7 @@ function MethodRow({ label, value, icon }: any) {
 }
 
 export default function DaySummaryModal({ isOpen, onClose, totalUsd: propTotalUsd, onConfirm }: DaySummaryModalProps) {
-  const { formatUsd, formatVes, usdToVes, exchangeRate, iva } = useCurrency();
+  const { formatUsd, formatVes, usdToVes, exchangeRate, iva, ivaEnabled } = useCurrency();
   const [summary, setSummary] = useState<any>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [cashInHandUsd, setCashInHandUsd] = useState<string>('');
@@ -86,7 +86,7 @@ export default function DaySummaryModal({ isOpen, onClose, totalUsd: propTotalUs
   // Métricas adicionales
   const orderCount = sales.length;
   const averageTicket = orderCount > 0 ? totalUsd / orderCount : 0;
-  const estimatedIvaUsd = totalUsd * iva;
+  const estimatedIvaUsd = ivaEnabled ? totalUsd * iva : 0;
 
   // Cálculos de cuadre
   const expectedCashUsd = summary?.cash_usd || 0;
@@ -103,8 +103,11 @@ export default function DaySummaryModal({ isOpen, onClose, totalUsd: propTotalUs
       { Concepto: "Total Ventas (VES)", Valor: totalVes.toFixed(2) },
       { Concepto: "Ticket Promedio (USD)", Valor: averageTicket.toFixed(2) },
       { Concepto: "Total Órdenes", Valor: orderCount },
-      { Concepto: "Impuesto IVA (16%) Est.", Valor: estimatedIvaUsd.toFixed(2) },
     ];
+
+    if (ivaEnabled) {
+      data.push({ Concepto: `Impuesto IVA (${(iva * 100).toFixed(0)}%) Est.`, Valor: estimatedIvaUsd.toFixed(2) });
+    }
 
     if (summary) {
       if (summary.cash_usd > 0) data.push({ Concepto: "Efectivo USD (Sistema)", Valor: summary.cash_usd.toFixed(2) });
@@ -258,19 +261,21 @@ export default function DaySummaryModal({ isOpen, onClose, totalUsd: propTotalUs
                 <MethodRow label="Efectivo USD" value={summary.cash_usd} icon={<DollarSign size={14}/>} />
                 <MethodRow label="Zelle" value={summary.zelle} icon={<Smartphone size={14}/>} />
                 <MethodRow label="Pago Móvil" value={summary.pago_movil} icon={<Smartphone size={14}/>} />
-                <MethodRow label="Punto de Venta" value={summary.card} icon={<CreditCard size={14}/>} />
-                <MethodRow label="Efectivo VES" value={summary.cash_ves} icon={<Banknote size={14}/>} />
-                <div className="flex justify-between items-center text-sm py-1">
-                  <div className="flex items-center gap-3 text-brand-text/40">
-                    <div className="p-1.5 bg-brand-border/20 rounded-lg">
-                      <Target size={14}/>
-                    </div>
-                    <span className="font-bold uppercase tracking-widest text-[10px]">IVA Est. (16%)</span>
-                  </div>
-                  <span className="font-black text-white/40">{formatUsd(estimatedIvaUsd)}</span>
-                </div>
-              </div>
-            )}
+                 <MethodRow label="Punto de Venta" value={summary.card} icon={<CreditCard size={14}/>} />
+                 <MethodRow label="Efectivo VES" value={summary.cash_ves} icon={<Banknote size={14}/>} />
+                 {ivaEnabled && (
+                   <div className="flex justify-between items-center text-sm py-1">
+                     <div className="flex items-center gap-3 text-brand-text/40">
+                       <div className="p-1.5 bg-brand-border/20 rounded-lg">
+                         <Target size={14}/>
+                       </div>
+                       <span className="font-bold uppercase tracking-widest text-[10px]">IVA Est. ({(iva * 100).toFixed(0)}%)</span>
+                     </div>
+                     <span className="font-black text-white/40">{formatUsd(estimatedIvaUsd)}</span>
+                   </div>
+                 )}
+               </div>
+             )}
             <div className="border-t border-brand-border/10 pt-4 mt-2 flex justify-between items-center">
               <span className="text-[10px] font-black text-brand-text/30 uppercase tracking-widest">Tasa aplicada hoy</span>
               <span className="font-black text-brand-accent bg-brand-accent/5 px-3 py-1 rounded-full text-xs">{exchangeRate.toFixed(2)} VES/$</span>

@@ -54,6 +54,7 @@ export interface Sale {
   totalUsd: number;
   paymentMethod?: 'cash_usd' | 'cash_ves' | 'zelle' | 'pago_movil' | 'card';
   payments?: Payment[];
+  status?: 'open' | 'closed';
 }
 
 export interface User {
@@ -77,6 +78,8 @@ export interface Database {
     exchangeRate: number;
     iva: number;
     igtf: number;
+    ivaEnabled: boolean;
+    igtfEnabled: boolean;
   };
 }
 
@@ -128,32 +131,70 @@ const apiCall = async (path: string, method: string = 'GET', body?: any) => {
   return await response.json();
 };
 
+const DEFAULT_SETTINGS = { 
+  exchangeRate: 36.5, 
+  iva: 0.16, 
+  igtf: 0.03,
+  ivaEnabled: 1,
+  igtfEnabled: 1
+};
+
 export const db = {
   async getSettings(): Promise<Database['settings']> {
     if (getStorageMode() === 'cloud' && supabase) {
       const { data } = await supabase.from('settings').select('*');
       if (data) {
-        return data.reduce((acc, row) => ({ ...acc, [row.key]: parseFloat(row.value) }), { exchangeRate: 36.5, iva: 0.16, igtf: 0.03 });
+        const settings = data.reduce((acc, row) => ({ ...acc, [row.key]: parseFloat(row.value) }), DEFAULT_SETTINGS);
+        return {
+          ...settings,
+          ivaEnabled: settings.ivaEnabled === 1,
+          igtfEnabled: settings.igtfEnabled === 1
+        };
       }
     }
     if (getStorageMode() === 'local' && !isElectron) {
-      return await apiCall('/api/settings');
+      const settings = await apiCall('/api/settings');
+      return {
+        ...settings,
+        ivaEnabled: settings.ivaEnabled === 1,
+        igtfEnabled: settings.igtfEnabled === 1
+      };
     }
-    if (isElectron) return await window.ipcRenderer.invoke('db-get-settings');
+    if (isElectron) {
+      const settings = await window.ipcRenderer.invoke('db-get-settings');
+      return {
+        ...settings,
+        ivaEnabled: settings.ivaEnabled === 1,
+        igtfEnabled: settings.igtfEnabled === 1
+      };
+    }
     const local = localStorage.getItem('gastro_settings');
-    return local ? JSON.parse(local) : { exchangeRate: 36.5, iva: 0.16, igtf: 0.03 };
+    const settings = local ? JSON.parse(local) : DEFAULT_SETTINGS;
+    return {
+      ...settings,
+      ivaEnabled: settings.ivaEnabled === 1,
+      igtfEnabled: settings.igtfEnabled === 1
+    };
   },
 
-  async updateSetting(key: string, value: number): Promise<void> {
+  async updateSetting(key: string, value: number | boolean): Promise<void> {
+    const valToSave = typeof value === 'boolean' ? (value ? 1 : 0) : value;
     if (getStorageMode() === 'cloud' && supabase) {
-      await supabase.from('settings').upsert({ key, value: value.toString() });
+      await supabase.from('settings').upsert({ key, value: valToSave.toString() });
       return;
     }
     if (isElectron) {
-      await window.ipcRenderer.invoke('db-update-setting', { key, value });
+      await window.ipcRenderer.invoke('db-update-setting', { key, value: valToSave });
     } else {
       const settings = await this.getSettings();
-      localStorage.setItem('gastro_settings', JSON.stringify({ ...settings, [key]: value }));
+      const updatedSettings = { 
+        ...settings, 
+        [key]: valToSave,
+        // Ensure we store internal numeric representation for boolean flags in localStorage
+        ivaEnabled: key === 'ivaEnabled' ? valToSave : (settings.ivaEnabled ? 1 : 0),
+        igtfEnabled: key === 'igtfEnabled' ? valToSave : (settings.igtfEnabled ? 1 : 0)
+      };
+      localStorage.setItem('gastro_settings', JSON.stringify(updatedSettings));
     }
   },
 
@@ -295,7 +336,7 @@ export const db = {
     
     let filtered = sales;
     if (!includeClosed) {
-      filtered = sales.filter(s => (s as any).status !== 'closed');
+      filtered = sales.filter(s => s.status !== 'closed');
     }
     
     if (startDate && endDate) {

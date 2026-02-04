@@ -35,7 +35,7 @@ import {
 } from 'recharts';
 
 export default function SalesHistoryPage() {
-  const { formatUsd, formatVes, exchangeRate, iva } = useCurrency();
+  const { formatUsd, formatVes, exchangeRate, iva, igtf, ivaEnabled, igtfEnabled } = useCurrency();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -52,13 +52,18 @@ export default function SalesHistoryPage() {
 
   const loadSales = async () => {
     setLoading(true);
-    const data = await db.getSales(
-      statusFilter === 'all' ? dateRange.start : undefined, 
-      statusFilter === 'all' ? dateRange.end : undefined, 
-      statusFilter === 'all'
-    );
-    setSales(data);
-    setLoading(false);
+    try {
+      const data = await db.getSales(
+        statusFilter === 'all' ? dateRange.start : undefined, 
+        statusFilter === 'all' ? dateRange.end : undefined, 
+        statusFilter === 'all'
+      );
+      setSales(data);
+    } catch (error) {
+      console.error("Error loading sales:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const deleteSale = async (id: string) => {
@@ -76,8 +81,8 @@ export default function SalesHistoryPage() {
       // Calcular impuestos basados en los pagos si existen
       const totalIgtf = s.payments?.reduce((acc, p) => acc + (p.igtfUsd || 0), 0) || 0;
       const subtotalConIva = s.totalUsd - totalIgtf;
-      const subtotalBase = subtotalConIva / (1 + iva);
-      const montoIva = subtotalConIva - subtotalBase;
+      const subtotalBase = ivaEnabled ? subtotalConIva / (1 + iva) : subtotalConIva;
+      const montoIva = ivaEnabled ? subtotalConIva - subtotalBase : 0;
 
       // Desglose de pagos
       const p_efectivo_usd = s.payments?.filter(p => p.method === 'cash_usd').reduce((acc, p) => acc + p.amountUsd + (p.igtfUsd || 0), 0) || (s.paymentMethod === 'cash_usd' ? s.totalUsd : 0);
@@ -86,24 +91,34 @@ export default function SalesHistoryPage() {
       const p_punto = s.payments?.filter(p => p.method === 'card').reduce((acc, p) => acc + (p.amountUsd || 0), 0) || (s.paymentMethod === 'card' ? s.totalUsd : 0);
       const p_efectivo_ves = s.payments?.filter(p => p.method === 'cash_ves').reduce((acc, p) => acc + (p.amountUsd || 0), 0) || (s.paymentMethod === 'cash_ves' ? s.totalUsd : 0);
 
-      return {
+      const row: any = {
         'ID VENTA': s.id.slice(0, 8).toUpperCase(),
         'FECHA': dateObj.toLocaleDateString(),
         'HORA': dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        'ESTADO': s.status === 'closed' ? 'CERRADA' : 'ABIERTA',
         'ITEMS': s.items.length,
         'DETALLE': s.items.map(i => `${i.quantity}x ${i.name}`).join(' | '),
-        'SUBTOTAL USD': Number(subtotalBase.toFixed(2)),
-        'IVA (16%) USD': Number(montoIva.toFixed(2)),
-        'IGTF (3%) USD': Number(totalIgtf.toFixed(2)),
-        'TOTAL USD': Number(s.totalUsd.toFixed(2)),
-        'TASA BCV': exchangeRate,
-        'TOTAL BS': Number((s.totalUsd * exchangeRate).toFixed(2)),
-        'PAGO EFEC USD': Number(p_efectivo_usd.toFixed(2)),
-        'PAGO ZELLE': Number(p_zelle.toFixed(2)),
-        'PAGO P. MOVIL': Number(p_pago_movil.toFixed(2)),
-        'PAGO PUNTO': Number(p_punto.toFixed(2)),
-        'PAGO EFEC VES': Number(p_efectivo_ves.toFixed(2))
+        'SUBTOTAL USD': Number(subtotalBase.toFixed(2))
       };
+
+      if (ivaEnabled) {
+        row[`IVA (${(iva * 100).toFixed(0)}%) USD`] = Number(montoIva.toFixed(2));
+      }
+
+      if (igtfEnabled || totalIgtf > 0) {
+        row[`IGTF (${(igtf * 100).toFixed(0)}%) USD`] = Number(totalIgtf.toFixed(2));
+      }
+
+      row['TOTAL USD'] = Number(s.totalUsd.toFixed(2));
+      row['TASA BCV'] = exchangeRate;
+      row['TOTAL BS'] = Number((s.totalUsd * exchangeRate).toFixed(2));
+      row['PAGO EFEC USD'] = Number(p_efectivo_usd.toFixed(2));
+      row['PAGO ZELLE'] = Number(p_zelle.toFixed(2));
+      row['PAGO P. MOVIL'] = Number(p_pago_movil.toFixed(2));
+      row['PAGO PUNTO'] = Number(p_punto.toFixed(2));
+      row['PAGO EFEC VES'] = Number(p_efectivo_ves.toFixed(2));
+
+      return row;
     });
 
     // Crear hoja de trabajo
@@ -150,7 +165,7 @@ export default function SalesHistoryPage() {
       });
     } else {
       // Fallback para ventas antiguas sin array de pagos
-      const method = (sale as any).paymentMethod || 'cash_usd';
+      const method = sale.paymentMethod || 'cash_usd';
       if (!acc[method]) acc[method] = { count: 0, usd: 0, ves: 0 };
       acc[method].count += 1;
       acc[method].usd += sale.totalUsd;
@@ -327,7 +342,6 @@ export default function SalesHistoryPage() {
             </div>
           </div>
 
-          {/* Listado lateral */}
           {/* Listado lateral - AHORA CON BUSQUEDA Y VENTAS */}
           <div className="glass-card flex flex-col h-[450px]">
             <div className="p-6 border-b border-brand-border/30">
@@ -344,37 +358,44 @@ export default function SalesHistoryPage() {
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-              <AnimatePresence>
-                {filteredSales.map((sale, idx) => (
-                  <motion.div 
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.05 }}
-                    key={sale.id}
-                    onClick={() => setSelectedSale(sale)}
-                    className={`p-4 glass-card border-brand-border/20 hover:border-brand-accent/30 cursor-pointer transition-all flex justify-between items-center group ${sale.status === 'closed' ? 'bg-brand-dark/10 opacity-60' : 'bg-brand-dark/20'}`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Clock size={12} className="text-brand-text/30" />
-                        <span className="text-[10px] font-black text-white">
-                          {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        {sale.status === 'closed' && (
-                          <span className="bg-brand-text/10 text-brand-text/40 px-2 py-0.5 rounded text-[8px] font-black uppercase">Cerrada</span>
-                        )}
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-20 animate-pulse">
+                  <div className="w-8 h-8 border-4 border-brand-accent border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-[10px] font-black uppercase tracking-widest text-brand-text/20">Cargando...</p>
+                </div>
+              ) : (
+                <AnimatePresence>
+                  {filteredSales.map((sale, idx) => (
+                    <motion.div 
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      key={sale.id}
+                      onClick={() => setSelectedSale(sale)}
+                      className={`p-4 glass-card border-brand-border/20 hover:border-brand-accent/30 cursor-pointer transition-all flex justify-between items-center group ${sale.status === 'closed' ? 'bg-brand-dark/10 opacity-60' : 'bg-brand-dark/20'}`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Clock size={12} className="text-brand-text/30" />
+                          <span className="text-[10px] font-black text-white">
+                            {new Date(sale.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {sale.status === 'closed' && (
+                            <span className="bg-brand-text/10 text-brand-text/40 px-2 py-0.5 rounded text-[8px] font-black uppercase">Cerrada</span>
+                          )}
+                        </div>
+                        <p className="text-[9px] font-bold text-brand-text/20 uppercase">#{sale.id.slice(0, 8)}</p>
                       </div>
-                      <p className="text-[9px] font-bold text-brand-text/20 uppercase">#{sale.id.slice(0, 8)}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-black text-white text-sm leading-none mb-1">{formatUsd(sale.totalUsd)}</p>
-                      <p className="text-[9px] font-bold text-brand-highlight uppercase leading-none">{formatVes(sale.totalUsd * exchangeRate)}</p>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                      <div className="text-right">
+                        <p className="font-black text-white text-sm leading-none mb-1">{formatUsd(sale.totalUsd)}</p>
+                        <p className="text-[9px] font-bold text-brand-highlight uppercase leading-none">{formatVes(sale.totalUsd * exchangeRate)}</p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
               
-              {filteredSales.length === 0 && (
+              {!loading && filteredSales.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-brand-text/20 opacity-30">
                   <ShoppingBag size={48} strokeWidth={1} className="mb-4" />
                   <p className="text-[10px] font-black uppercase tracking-widest">Sin registros</p>
@@ -385,7 +406,7 @@ export default function SalesHistoryPage() {
         </div>
 
         {/* Métodos de Pago (Ahora abajo en cuadrícula) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
           <PaymentStatCard 
             label="Efectivo USD"
             method="cash_usd"
@@ -408,7 +429,24 @@ export default function SalesHistoryPage() {
             gradient="from-cyan-500/10 via-transparent to-transparent"
             showVes
           />
+          <PaymentStatCard 
+            label="Efectivo BS"
+            method="cash_ves"
+            stats={paymentBreakdown.cash_ves}
+            icon={<Banknote className="text-green-500" size={20} />}
+            gradient="from-green-500/10 via-transparent to-transparent"
+            showVes
+          />
+          <PaymentStatCard 
+            label="Punto Venta"
+            method="card"
+            stats={paymentBreakdown.card}
+            icon={<CreditCard className="text-orange-500" size={20} />}
+            gradient="from-orange-500/10 via-transparent to-transparent"
+            showVes
+          />
         </div>
+
       </main>
 
       {/* Modal Detalle Venta */}

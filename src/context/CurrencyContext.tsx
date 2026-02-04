@@ -10,6 +10,10 @@ interface CurrencyContextType {
   setIva: (rate: number) => void;
   igtf: number;
   setIgtf: (rate: number) => void;
+  ivaEnabled: boolean;
+  setIvaEnabled: (enabled: boolean) => void;
+  igtfEnabled: boolean;
+  setIgtfEnabled: (enabled: boolean) => void;
   usdToVes: (usd: number) => number;
   vesToUsd: (ves: number) => number;
   formatUsd: (amount: number) => string;
@@ -24,6 +28,8 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   const [exchangeRate, setExchangeRate] = useState(36.50); 
   const [iva, setIva] = useState(0.16);
   const [igtf, setIgtf] = useState(0.03);
+  const [ivaEnabled, setIvaEnabled] = useState(true);
+  const [igtfEnabled, setIgtfEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [suggestedRate, setSuggestedRate] = useState<number | null>(null);
 
@@ -36,6 +42,8 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
           setExchangeRate(settings.exchangeRate);
           setIva(settings.iva);
           setIgtf(settings.igtf);
+          setIvaEnabled(settings.ivaEnabled ?? true);
+          setIgtfEnabled(settings.igtfEnabled ?? true);
         }
         
         // Intentar obtener tasa oficial
@@ -72,6 +80,16 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
     db.updateSetting('igtf', rate);
   };
 
+  const handleSetIvaEnabled = (enabled: boolean) => {
+    setIvaEnabled(enabled);
+    db.updateSetting('ivaEnabled', enabled);
+  };
+
+  const handleSetIgtfEnabled = (enabled: boolean) => {
+    setIgtfEnabled(enabled);
+    db.updateSetting('igtfEnabled', enabled);
+  };
+
   const usdToVes = (usd: number) => usd * exchangeRate;
   const vesToUsd = (ves: number) => ves / exchangeRate;
 
@@ -97,6 +115,10 @@ export function CurrencyProvider({ children }: { children: React.ReactNode }) {
       setIva: handleSetIva,
       igtf, 
       setIgtf: handleSetIgtf,
+      ivaEnabled,
+      setIvaEnabled: handleSetIvaEnabled,
+      igtfEnabled,
+      setIgtfEnabled: handleSetIgtfEnabled,
       usdToVes, 
       vesToUsd, 
       formatUsd, 

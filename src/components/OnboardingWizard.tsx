@@ -23,13 +23,21 @@ import { db } from '@/lib/db';
 
 export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardProps) {
   const [step, setStep] = useState(1);
-  const { exchangeRate, setExchangeRate, iva, setIva, igtf, setIgtf } = useCurrency();
+  const { 
+    exchangeRate, setExchangeRate, 
+    iva, setIva, 
+    igtf, setIgtf,
+    ivaEnabled, setIvaEnabled,
+    igtfEnabled, setIgtfEnabled
+  } = useCurrency();
   
   const isElectron = typeof window !== 'undefined' && (window as any).ipcRenderer;
 
   const [tempRate, setTempRate] = useState(exchangeRate);
   const [tempIva, setTempIva] = useState(iva * 100);
   const [tempIgtf, setTempIgtf] = useState(igtf * 100);
+  const [tempIvaEnabled, setTempIvaEnabled] = useState(ivaEnabled);
+  const [tempIgtfEnabled, setTempIgtfEnabled] = useState(igtfEnabled);
   const [storageMode, setStorageMode] = useState<'local' | 'cloud'>('local');
   const [supabaseUrl, setSupabaseUrl] = useState('');
   const [supabaseKey, setSupabaseKey] = useState('');
@@ -51,6 +59,8 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
     setExchangeRate(tempRate);
     setIva(tempIva / 100);
     setIgtf(tempIgtf / 100);
+    setIvaEnabled(tempIvaEnabled);
+    setIgtfEnabled(tempIgtfEnabled);
 
     // Re-instanciar DB o recargar para aplicar cambios si es necesario
     // Pero por ahora solo guardamos y cerramos
@@ -197,35 +207,53 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 space-y-3">
-                  <label className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                    <Percent size={16} /> IVA General
-                  </label>
+                <div className={`p-6 rounded-3xl border transition-all space-y-3 ${tempIvaEnabled ? 'bg-gray-50 border-gray-100' : 'bg-gray-50/50 border-dashed border-gray-200 opacity-60'}`}>
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                      <Percent size={16} /> IVA General
+                    </label>
+                    <button 
+                      onClick={() => setTempIvaEnabled(!tempIvaEnabled)}
+                      className={`w-10 h-5 rounded-full relative transition-colors ${tempIvaEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${tempIvaEnabled ? 'right-1' : 'left-1'}`} />
+                    </button>
+                  </div>
                   <input 
                     type="number" 
+                    disabled={!tempIvaEnabled}
                     value={tempIva}
                     onChange={(e) => setTempIva(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-white border-2 border-gray-100 focus:border-blue-500 rounded-2xl py-4 px-6 text-3xl font-black text-gray-800 outline-none"
+                    className="w-full bg-white border-2 border-gray-100 focus:border-blue-500 rounded-2xl py-4 px-6 text-3xl font-black text-gray-800 outline-none disabled:opacity-50"
                   />
-                  <p className="text-xs text-gray-400 font-medium">Estándar: 16%</p>
+                  <p className="text-xs text-gray-400 font-medium">{tempIvaEnabled ? 'Estándar: 16%' : 'IVA Deshabilitado'}</p>
                 </div>
-                <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 space-y-3">
-                  <label className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                    <Percent size={16} /> IGTF (Divisas)
-                  </label>
+                <div className={`p-6 rounded-3xl border transition-all space-y-3 ${tempIgtfEnabled ? 'bg-gray-50 border-gray-100' : 'bg-gray-50/50 border-dashed border-gray-200 opacity-60'}`}>
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                      <Percent size={16} /> IGTF (Divisas)
+                    </label>
+                    <button 
+                      onClick={() => setTempIgtfEnabled(!tempIgtfEnabled)}
+                      className={`w-10 h-5 rounded-full relative transition-colors ${tempIgtfEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${tempIgtfEnabled ? 'right-1' : 'left-1'}`} />
+                    </button>
+                  </div>
                   <input 
                     type="number" 
+                    disabled={!tempIgtfEnabled}
                     value={tempIgtf}
                     onChange={(e) => setTempIgtf(parseFloat(e.target.value) || 0)}
-                    className="w-full bg-white border-2 border-gray-100 focus:border-blue-500 rounded-2xl py-4 px-6 text-3xl font-black text-gray-800 outline-none"
+                    className="w-full bg-white border-2 border-gray-100 focus:border-blue-500 rounded-2xl py-4 px-6 text-3xl font-black text-gray-800 outline-none disabled:opacity-50"
                   />
-                  <p className="text-xs text-gray-400 font-medium">Estándar: 3%</p>
+                  <p className="text-xs text-gray-400 font-medium">{tempIgtfEnabled ? 'Estándar: 3%' : 'IGTF Deshabilitado'}</p>
                 </div>
               </div>
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 text-center py-6">
               <div className="bg-orange-50 w-20 h-20 rounded-[2rem] flex items-center justify-center text-orange-600 mx-auto mb-6 shadow-xl shadow-orange-100">
                 <LayoutDashboard size={40} />
@@ -244,7 +272,7 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="space-y-6 animate-in fade-in zoom-in duration-500 text-center py-6">
               <div className="bg-green-500 w-24 h-24 rounded-full flex items-center justify-center text-white mx-auto mb-6 shadow-2xl shadow-green-200">
                 <CheckCircle2 size={56} />
@@ -259,8 +287,12 @@ export default function OnboardingWizard({ isOpen, onClose }: OnboardingWizardPr
                   <span>{tempRate.toFixed(2)} VES/$</span>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-gray-600">
-                  <span>IVA Configurado</span>
-                  <span>{tempIva}%</span>
+                  <span>IVA</span>
+                  <span className={tempIvaEnabled ? 'text-blue-600' : 'text-gray-400 line-through'}>{tempIva}%</span>
+                </div>
+                <div className="flex justify-between text-sm font-bold text-gray-600">
+                  <span>IGTF</span>
+                  <span className={tempIgtfEnabled ? 'text-blue-600' : 'text-gray-400 line-through'}>{tempIgtf}%</span>
                 </div>
               </div>
             </div>
