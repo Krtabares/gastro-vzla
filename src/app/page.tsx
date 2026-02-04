@@ -206,6 +206,8 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-5">
           <DashboardLink href="/pos" icon={<PlusCircle size={28} />} label="Comedor / POS" accent="accent" />
           
+          <DashboardLink href="/cashier" icon={<DollarSign size={28} />} label="Monitor Caja" accent="highlight" />
+
           {(currentUser?.role === 'root' || currentUser?.role === 'admin') && (
             <DashboardLink href="/menu" icon={<Utensils size={28} />} label="Menú / Precios" accent="highlight" />
           )}

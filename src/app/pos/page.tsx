@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useCurrency } from "@/context/CurrencyContext";
 import { useOrders } from "@/context/OrdersContext";
 import BillingModal from "@/components/pos/BillingModal";
@@ -30,9 +30,13 @@ import {
   AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function POSPage() {
+function POSContent() {
+  const searchParams = useSearchParams();
+  const tableIdParam = searchParams.get('tableId');
+  
   const { formatUsd, formatVes, usdToVes, iva } = useCurrency();
   const { orders, addOrder, completeSale } = useOrders();
   const [tables, setTables] = useState<Table[]>([]);
@@ -52,7 +56,7 @@ export default function POSPage() {
   const [isChargeWarningOpen, setIsChargeWarningOpen] = useState(false);
 
   useEffect(() => {
-    loadData();
+    loadInitialData();
     const storedUser = localStorage.getItem('gastro_user');
     if (storedUser) setCurrentUser(JSON.parse(storedUser));
 
@@ -76,6 +80,22 @@ export default function POSPage() {
       };
     }
   }, []);
+
+  const loadInitialData = async () => {
+    const [dbTables, dbProducts] = await Promise.all([
+      db.getTables(),
+      db.getProducts()
+    ]);
+    setTables(dbTables);
+    setProducts(dbProducts);
+
+    if (tableIdParam) {
+      const table = dbTables.find(t => t.id === tableIdParam);
+      if (table) {
+        handleTableSelect(table);
+      }
+    }
+  };
 
   const loadData = async (ignoreSelection = false) => {
     const [dbTables, dbProducts] = await Promise.all([
@@ -807,6 +827,18 @@ export default function POSPage() {
         onConfirm={confirmCreateTable}
       />
     </main>
+  );
+}
+
+export default function POSPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-brand-dark flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-brand-accent/20 border-t-brand-accent rounded-full animate-spin" />
+      </div>
+    }>
+      <POSContent />
+    </Suspense>
   );
 }
 
