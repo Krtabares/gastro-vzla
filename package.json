@@ -11,8 +11,7 @@
     "lint": "next lint",
     "seed": "node scripts/seed.js",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "next build && electron-builder",
-    "postinstall": "electron-builder install-app-deps"
+    "electron:build": "next build && electron-builder"
   },
   "build": {
     "appId": "com.gastro.vnzla",
@@ -73,7 +72,7 @@
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
     "concurrently": "^9.2.1",
-    "electron": "^40.0.0",
+    "electron": "^31.0.0",
     "electron-builder": "^26.4.0",
     "eslint": "^8",
     "eslint-config-next": "14.1.0",

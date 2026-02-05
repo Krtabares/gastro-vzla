@@ -1,6 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const isDev = require('electron-is-dev');
 const fs = require('fs');
 const escpos = require('escpos');
 escpos.USB = require('escpos-usb');
@@ -10,7 +9,10 @@ const os = require('os');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
-// Configuración del servidor para móviles
+// Detección robusta de producción
+const isProd = app.isPackaged;
+
+// Configuración del servidor para móviles y local
 const expressApp = express();
 const SERVER_PORT = 3001;
 
@@ -29,16 +31,30 @@ function getLocalIp() {
 const LOCAL_IP = getLocalIp();
 
 function startLocalServer() {
-  const outPath = isDev 
-    ? path.join(__dirname, 'out') 
-    : path.join(process.resourcesPath, 'app', 'out');
+  // En Electron, __dirname apunta al directorio del script. 
+  // Tanto en dev como en el .exe empaquetado (ASAR), 'out' está al lado de 'main.js'.
+  const outPath = path.join(__dirname, 'out');
 
-  if (!fs.existsSync(outPath) && !isDev) {
-    console.error('La carpeta "out" no existe. Asegúrate de correr npm run build primero.');
+  console.log(`Server: Sirviendo archivos desde: ${outPath}`);
+
+  if (!fs.existsSync(outPath)) {
+    console.error('CRÍTICO: La carpeta "out" no fue encontrada. Asegúrate de compilar el frontend.');
   }
 
   expressApp.use(cors());
   expressApp.use(bodyParser.json());
+  
+  // Middleware para manejar rutas de Next.js sin .html
+  expressApp.use((req, res, next) => {
+    if (req.path !== '/' && !path.extname(req.path)) {
+      const htmlPath = path.join(outPath, `${req.path}.html`);
+      if (fs.existsSync(htmlPath)) {
+        return res.sendFile(htmlPath);
+      }
+    }
+    next();
+  });
+
   expressApp.use(express.static(outPath));
 
   // --- API Routes for Mobile Clients ---
@@ -276,13 +292,14 @@ function createWindow() {
 
   win.setMenuBarVisibility(false);
 
-  const startUrl = isDev 
+  // En producción usamos el servidor Express local para evitar problemas de rutas file://
+  const startUrl = !isProd 
     ? 'http://localhost:3000' 
-    : `file://${path.join(__dirname, 'out/index.html')}`;
+    : `http://localhost:${SERVER_PORT}`;
 
   win.loadURL(startUrl);
 
-  if (isDev) {
+  if (!isProd) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
 }
@@ -302,9 +319,9 @@ function createKitchenWindow(queryParams = '') {
 
   kitchenWin.setMenuBarVisibility(false);
 
-  const startUrl = isDev 
+  const startUrl = !isProd 
     ? `http://localhost:3000/kitchen${queryParams}` 
-    : `file://${path.join(__dirname, 'out/kitchen.html')}${queryParams}`;
+    : `http://localhost:${SERVER_PORT}/kitchen${queryParams}`;
 
   kitchenWin.loadURL(startUrl);
 }

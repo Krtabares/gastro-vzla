@@ -12,5 +12,10 @@ files:
       - public/**/*
 win:
   target: nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
 asar: true
-electronVersion: 40.0.0
+electronVersion: 31.7.7
